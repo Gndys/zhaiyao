@@ -305,7 +305,10 @@ function extractApimartTranscript(data: any) {
 
   if (Array.isArray(data?.segments)) {
     return data.segments
-      .map((segment) => segment?.text || segment?.content)
+      .map(
+        (segment: { text?: string; content?: string }) =>
+          segment?.text || segment?.content
+      )
       .filter(Boolean)
       .join("\n");
   }
