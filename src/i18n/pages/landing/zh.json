@@ -1,0 +1,504 @@
+{
+  "template": "shipany-template-one",
+  "theme": "light",
+  "header": {
+    "brand": {
+      "title": "ZhaiYao",
+      "logo": {
+        "src": "/logo.png",
+        "alt": "ZhaiYao"
+      },
+      "url": "/"
+    },
+    "nav": {
+      "items": [
+        {
+          "title": "产品亮点",
+          "url": "/#feature",
+          "icon": "RiSparkling2Line"
+        },
+        {
+          "title": "工具",
+          "icon": "RiToolsLine",
+          "children": [
+            {
+              "title": "录音转逐字稿",
+              "url": "/transcribe",
+              "icon": "RiMic2Line"
+            },
+            {
+              "title": "逐字稿总结",
+              "url": "/trial",
+              "icon": "RiFileListLine"
+            }
+          ]
+        }
+      ]
+    },
+    "buttons": [
+      {
+        "title": "免费试用",
+        "url": "/trial",
+        "target": "_self",
+        "variant": "link",
+        "icon": "RiArrowRightUpLine"
+      }
+    ],
+    "show_sign": true,
+    "show_theme": true,
+    "show_locale": true
+  },
+  "hero": {
+    "title": "AI 会议摘要助手，自动生成逐字稿与行动项",
+    "highlight_text": "会议摘要",
+    "description": "ZhaiYao 支持上传会议录音或导入在线视频流，几分钟完成逐字稿与结构化总结，<br/>让每一次沟通都可追踪、可复盘、可执行。",
+    "announcement": {
+      "label": "新品上线",
+      "title": "🚀 企业试用开启，限时 14 天免费",
+      "url": "/pricing"
+    },
+    "tip": "🎁 新用户赠送 120 分钟转写额度",
+    "buttons": [
+      {
+        "title": "免费试用",
+        "icon": "RiFlashlightFill",
+        "url": "/trial",
+        "target": "_self",
+        "variant": "default"
+      },
+      {
+        "title": "查看产品演示",
+        "icon": "RiPlayCircleLine",
+        "url": "https://docs.shipany.ai/zh/tutorials/customize-landing-page",
+        "target": "_blank",
+        "variant": "outline"
+      }
+    ],
+    "show_happy_users": true,
+    "show_badge": true
+  },
+  "branding": {
+    "title": "ZhaiYao 由领先的 AI 与云基础架构驱动",
+    "items": [
+      {
+        "title": "Next.js",
+        "image": {
+          "src": "/imgs/logos/nextjs.svg",
+          "alt": "Next.js"
+        }
+      },
+      {
+        "title": "React",
+        "image": {
+          "src": "/imgs/logos/react.svg",
+          "alt": "React"
+        }
+      },
+      {
+        "title": "TailwindCSS",
+        "image": {
+          "src": "/imgs/logos/tailwindcss.svg",
+          "alt": "TailwindCSS"
+        }
+      },
+      {
+        "title": "Shadcn/UI",
+        "image": {
+          "src": "/imgs/logos/shadcn.svg",
+          "alt": "Shadcn/UI"
+        }
+      },
+      {
+        "title": "Vercel",
+        "image": {
+          "src": "/imgs/logos/vercel.svg",
+          "alt": "Vercel"
+        }
+      }
+    ]
+  },
+  "introduce": {
+    "name": "introduce",
+    "title": "ZhaiYao 做什么",
+    "label": "介绍",
+    "description": "ZhaiYao 是一体化 AI 会议摘要工具，从音频转写、AI 总结到行动项推送，帮助团队在任何场景下都能快速回顾关键信息。",
+    "image": {
+      "src": "/imgs/features/1.png"
+    },
+    "items": [
+      {
+        "title": "高精度转写",
+        "description": "支持多语种与多角色区分，噪音环境也能获得可靠的逐字稿。",
+        "icon": "RiVoiceprintFill"
+      },
+      {
+        "title": "AI 智能总结",
+        "description": "自动输出会议摘要、决策结论与 TODO，支持企业知识库同步。",
+        "icon": "RiRobot2Line"
+      },
+      {
+        "title": "多终端协作",
+        "description": "桌面、移动与 Web 端统一体验，方便随时复盘会议。",
+        "icon": "RiDeviceFill"
+      }
+    ]
+  },
+  "benefit": {
+    "name": "benefit",
+    "title": "为什么团队选择 ZhaiYao",
+    "label": "优势",
+    "description": "我们专为频繁会议和远程协作场景打造，确保信息沉淀与任务跟进不再依赖手动记录。",
+    "items": [
+      {
+        "title": "从语音到洞察，仅需数分钟",
+        "description": "上传录音或连至会议平台，自动完成转写、分段、总结和关键字提取。",
+        "icon": "RiTimerFlashLine",
+        "image": {
+          "src": "/imgs/features/2.png"
+        }
+      },
+      {
+        "title": "行动项自动分发",
+        "description": "识别负责人与截止时间，推送到 Slack、飞书或邮件，减少遗漏。",
+        "icon": "RiTodoLine",
+        "image": {
+          "src": "/imgs/features/3.png"
+        }
+      },
+      {
+        "title": "企业级数据安全",
+        "description": "端到端加密、独立空间隔离，并通过权限控制保障敏感会议内容安全。",
+        "icon": "RiShieldKeyholeLine",
+        "image": {
+          "src": "/imgs/features/4.png"
+        }
+      }
+    ]
+  },
+  "usage": {
+    "name": "usage",
+    "title": "三步完成会议沉淀",
+    "description": "无论是销售回访、项目例会还是董事会议，ZhaiYao 都能在以下 3 步完成记录：",
+    "image": {
+      "src": "/imgs/features/5.png"
+    },
+    "image_position": "left",
+    "text_align": "center",
+    "items": [
+      {
+        "title": "录音或导入链接",
+        "description": "支持上传 mp3/mp4、实时录音或接入 Zoom、腾讯会议等平台。",
+        "image": {
+          "src": "/imgs/features/6.png"
+        }
+      },
+      {
+        "title": "自动转写与校对",
+        "description": "AI 进行语音识别、角色区分并提供可编辑逐字稿，支持多人协同校正。",
+        "image": {
+          "src": "/imgs/features/7.png"
+        }
+      },
+      {
+        "title": "一键生成总结",
+        "description": "生成会议摘要、亮点、风险与下一步计划，可直接分享到知识库或 IM。",
+        "image": {
+          "src": "/imgs/features/8.png"
+        }
+      },
+      {
+        "title": "自动推送行动项",
+        "description": "同步任务至 Jira、飞书待办或邮件，确保每项共识都有人跟进。",
+        "image": {
+          "src": "/imgs/features/9.png"
+        }
+      }
+    ]
+  },
+  "feature": {
+    "name": "feature",
+    "title": "核心能力",
+    "description": "围绕“音频转写 + AI 总结 + 行动项”打造的全链路平台。",
+    "items": [
+      {
+        "title": "逐字稿引擎",
+        "description": "基于自研声学模型与 OpenAI Whisper，支持 30+ 语言及口音。",
+        "icon": "RiMic2Line"
+      },
+      {
+        "title": "智能角色识别",
+        "description": "区分发言人、识别关键词与情绪，让对话结构更清晰。",
+        "icon": "RiTeamLine"
+      },
+      {
+        "title": "多模板总结",
+        "description": "销售回顾、项目周会、投后沟通等 10+ 模板可选，摘要更贴合场景。",
+        "icon": "RiDraftLine"
+      },
+      {
+        "title": "行动项派发",
+        "description": "结合负责人与时间节点，自动同步到任务系统。",
+        "icon": "RiShareForwardLine"
+      },
+      {
+        "title": "知识库同步",
+        "description": "与 Confluence、Notion、飞书文档互通，形成结构化沉淀。",
+        "icon": "RiBookletLine"
+      },
+      {
+        "title": "权限与审计",
+        "description": "细粒度访问控制、下载水印与操作日志，满足企业合规。",
+        "icon": "RiLockPasswordLine"
+      }
+    ]
+  },
+  "stats": {
+    "name": "stats",
+    "label": "数据",
+    "title": "数字证明价值",
+    "description": "真实用户在 ZhaiYao 中获得了可衡量的效率提升。",
+    "icon": "FaRegHeart",
+    "items": [
+      {
+        "title": "累计转写时长",
+        "label": "3,200+",
+        "description": "小时"
+      },
+      {
+        "title": "支持语言",
+        "label": "30",
+        "description": "种"
+      },
+      {
+        "title": "节省整理时间",
+        "label": "68%",
+        "description": "平均"
+      }
+    ]
+  },
+  "testimonial": {
+    "name": "testimonial",
+    "label": "口碑",
+    "title": "团队都这样评价 ZhaiYao",
+    "description": "来自销售、咨询、互联网与投行团队的真实反馈。",
+    "icon": "GoThumbsup",
+    "items": [
+      {
+        "title": "李珊",
+        "label": "上海科技公司 PMO",
+        "description": "以前整理周例会要花半天，现在录完直接收到摘要，团队统一在一个链接里协作，非常高效。",
+        "image": {
+          "src": "/imgs/users/1.png"
+        }
+      },
+      {
+        "title": "Brian Wang",
+        "label": "跨境销售负责人",
+        "description": "多语言转写准确率超出预期，自动行动项同步到 Slack，帮助我们更快成交。",
+        "image": {
+          "src": "/imgs/users/2.png"
+        }
+      },
+      {
+        "title": "陈律",
+        "label": "投资机构合伙人",
+        "description": "所有投后会议都能快速回看关键结论，权限控制让 LP 也放心。",
+        "image": {
+          "src": "/imgs/users/3.png"
+        }
+      },
+      {
+        "title": "Isabella",
+        "label": "咨询顾问",
+        "description": "场景模板让交付材料成型更快，客户满意度明显提升。",
+        "image": {
+          "src": "/imgs/users/4.png"
+        }
+      },
+      {
+        "title": "赵紫宁",
+        "label": "人力 HRBP",
+        "description": "培训与访谈都能沉淀成知识库，随时搜索历史内容，新同事也能快速上手。",
+        "image": {
+          "src": "/imgs/users/5.png"
+        }
+      },
+      {
+        "title": "Mateo",
+        "label": "远程创业者",
+        "description": "移动端能即刻查看会议要点，跨时区沟通终于不再错过重点。",
+        "image": {
+          "src": "/imgs/users/6.png"
+        }
+      }
+    ]
+  },
+  "faq": {
+    "name": "faq",
+    "label": "FAQ",
+    "title": "常见问题",
+    "description": "还有疑问？随时邮件或扫码加入社群联系团队。",
+    "items": [
+      {
+        "title": "支持哪些音频或会议来源？",
+        "description": "支持 mp3、wav、m4a、mp4、mov 等文件上传，也可连接 Zoom、Google Meet、腾讯会议、飞书会议等第三方链接。"
+      },
+      {
+        "title": "转写准确率怎样？",
+        "description": "在普通会议环境下汉语准确率可达 96%+，英语与中英混合可达 92%+，并可通过自定义词库进一步提升。"
+      },
+      {
+        "title": "生成摘要是否可编辑？",
+        "description": "可以。逐字稿与摘要均可协同编辑，且每次修改都会自动同步版本。"
+      },
+      {
+        "title": "如何保证数据安全？",
+        "description": "数据静态加密、传输 TLS，支持私有化部署、访问审计日志以及成员权限分级。"
+      },
+      {
+        "title": "支持哪些集成？",
+        "description": "目前已接入 Slack、飞书、钉钉、Notion、Confluence、Jira 与邮件，更多系统可通过 API 接入。"
+      },
+      {
+        "title": "是否提供企业版？",
+        "description": "提供企业私有化部署与专属模型定制服务，可联系商务获取方案。"
+      }
+    ]
+  },
+  "cta": {
+    "name": "cta",
+    "title": "让每一次会议都有结果",
+    "description": "立即使用 ZhaiYao，自动记录、总结与分发行动项。",
+    "buttons": [
+      {
+        "title": "预约演示",
+        "url": "/pricing",
+        "target": "_self",
+        "icon": "GoArrowUpRight"
+      },
+      {
+        "title": "下载产品手册",
+        "url": "/zh/docs",
+        "target": "_self",
+        "variant": "outline"
+      }
+    ]
+  },
+  "footer": {
+    "name": "footer",
+    "brand": {
+      "title": "ZhaiYao",
+      "description": "ZhaiYao 是面向高频会议团队的 AI 摘要平台，提供音频转写、AI 总结与任务分发的一站式体验。",
+      "logo": {
+        "src": "/logo.png",
+        "alt": "ZhaiYao"
+      },
+      "url": "/"
+    },
+    "copyright": "© 2025 • ZhaiYao 保留所有权利。",
+    "nav": {
+      "items": [
+        {
+          "title": "了解产品",
+          "children": [
+            {
+              "title": "产品亮点",
+              "url": "/#feature",
+              "target": "_self"
+            },
+            {
+              "title": "客户案例",
+              "url": "/#showcase",
+              "target": "_self"
+            },
+            {
+              "title": "价格方案",
+              "url": "/#pricing",
+              "target": "_self"
+            }
+          ]
+        },
+        {
+          "title": "资源",
+          "children": [
+            {
+              "title": "产品手册",
+              "url": "https://docs.shipany.ai/zh",
+              "target": "_blank"
+            },
+            {
+              "title": "API",
+              "url": "https://shipany.ai/templates",
+              "target": "_blank"
+            },
+            {
+              "title": "上线指南",
+              "url": "https://docs.shipany.ai/zh/deploy/deploy-to-vercel",
+              "target": "_blank"
+            }
+          ]
+        },
+        {
+          "title": "合作伙伴",
+          "children": [
+            {
+              "title": "ShipAny",
+              "url": "https://shipany.ai",
+              "target": "_blank"
+            },
+            {
+              "title": "ThinkAny",
+              "url": "https://thinkany.ai",
+              "target": "_blank"
+            },
+            {
+              "title": "Pagen",
+              "url": "https://pagen.so",
+              "target": "_blank"
+            }
+          ]
+        }
+      ]
+    },
+    "social": {
+      "items": [
+        {
+          "title": "X",
+          "icon": "RiTwitterXFill",
+          "url": "https://x.com/shipanyai",
+          "target": "_blank"
+        },
+        {
+          "title": "Github",
+          "icon": "RiGithubFill",
+          "url": "https://github.com/shipanyai",
+          "target": "_blank"
+        },
+        {
+          "title": "社区",
+          "icon": "RiDiscordFill",
+          "url": "https://discord.gg/HQNnrzjZQS",
+          "target": "_blank"
+        },
+        {
+          "title": "邮箱",
+          "icon": "RiMailLine",
+          "url": "mailto:support@shipany.ai",
+          "target": "_self"
+        }
+      ]
+    },
+    "agreement": {
+      "items": [
+        {
+          "title": "隐私政策",
+          "url": "/privacy-policy"
+        },
+        {
+          "title": "服务条款",
+          "url": "/terms-of-service"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,504 @@
+{
+  "template": "shipany-template-one",
+  "theme": "light",
+  "header": {
+    "brand": {
+      "title": "ZhaiYao",
+      "logo": {
+        "src": "/logo.png",
+        "alt": "ZhaiYao"
+      },
+      "url": "/"
+    },
+    "nav": {
+      "items": [
+        {
+          "title": "Highlights",
+          "url": "/#feature",
+          "icon": "RiSparkling2Line"
+        },
+        {
+          "title": "Tools",
+          "icon": "RiToolsLine",
+          "children": [
+            {
+              "title": "Recording to Transcript",
+              "url": "/transcribe",
+              "icon": "RiMic2Line"
+            },
+            {
+              "title": "Transcript Summary",
+              "url": "/trial",
+              "icon": "RiFileListLine"
+            }
+          ]
+        }
+      ]
+    },
+    "buttons": [
+      {
+        "title": "Free Trial",
+        "url": "/trial",
+        "target": "_self",
+        "variant": "link",
+        "icon": "RiArrowRightUpLine"
+      }
+    ],
+    "show_sign": true,
+    "show_theme": true,
+    "show_locale": true
+  },
+  "hero": {
+    "title": "AI meeting notes with transcripts, summaries and action items",
+    "highlight_text": "Meeting Intelligence",
+    "description": "Upload recordings or connect live conferencing tools – ZhaiYao turns hours of audio into clean transcripts,<br/>AI-written summaries, follow-up tasks and shareable knowledge in minutes.",
+    "announcement": {
+      "label": "Launch Offer",
+      "title": "🚀 14-day enterprise trial is now open",
+      "url": "/pricing"
+    },
+    "tip": "🎁 New accounts receive 120 complimentary transcription minutes",
+    "buttons": [
+      {
+        "title": "Start Free Trial",
+        "icon": "RiFlashlightFill",
+        "url": "/trial",
+        "target": "_self",
+        "variant": "default"
+      },
+      {
+        "title": "See Product Demo",
+        "icon": "RiPlayCircleLine",
+        "url": "https://docs.shipany.ai/tutorials/customize-landing-page",
+        "target": "_blank",
+        "variant": "outline"
+      }
+    ],
+    "show_happy_users": true,
+    "show_badge": true
+  },
+  "branding": {
+    "title": "Powered by battle-tested AI and cloud infrastructure",
+    "items": [
+      {
+        "title": "Next.js",
+        "image": {
+          "src": "/imgs/logos/nextjs.svg",
+          "alt": "Next.js"
+        }
+      },
+      {
+        "title": "React",
+        "image": {
+          "src": "/imgs/logos/react.svg",
+          "alt": "React"
+        }
+      },
+      {
+        "title": "TailwindCSS",
+        "image": {
+          "src": "/imgs/logos/tailwindcss.svg",
+          "alt": "TailwindCSS"
+        }
+      },
+      {
+        "title": "Shadcn/UI",
+        "image": {
+          "src": "/imgs/logos/shadcn.svg",
+          "alt": "Shadcn/UI"
+        }
+      },
+      {
+        "title": "Vercel",
+        "image": {
+          "src": "/imgs/logos/vercel.svg",
+          "alt": "Vercel"
+        }
+      }
+    ]
+  },
+  "introduce": {
+    "name": "introduce",
+    "title": "What ZhaiYao delivers",
+    "label": "Overview",
+    "description": "ZhaiYao is an end-to-end AI meeting intelligence platform that converts audio into transcripts, summaries and workflow-ready tasks for any team meeting.",
+    "image": {
+      "src": "/imgs/features/1.png"
+    },
+    "items": [
+      {
+        "title": "Accurate transcription",
+        "description": "Multi-language, speaker diarization and noise-resistant transcripts powered by custom ASR + Whisper.",
+        "icon": "RiVoiceprintFill"
+      },
+      {
+        "title": "AI insights",
+        "description": "Auto summaries, decisions, risks and TODOs synced to your workspace.",
+        "icon": "RiRobot2Line"
+      },
+      {
+        "title": "Collaborative workspace",
+        "description": "Desktop, mobile and web experiences keep every stakeholder aligned instantly.",
+        "icon": "RiDeviceFill"
+      }
+    ]
+  },
+  "benefit": {
+    "name": "benefit",
+    "title": "Why teams switch to ZhaiYao",
+    "label": "Benefits",
+    "description": "Perfect for revenue teams, project reviews and remote leadership meetings that need reliable follow-ups.",
+    "items": [
+      {
+        "title": "Minutes to insights",
+        "description": "Upload files or connect Zoom and let ZhaiYao transcribe, segment and summarize automatically.",
+        "icon": "RiTimerFlashLine",
+        "image": {
+          "src": "/imgs/features/2.png"
+        }
+      },
+      {
+        "title": "Action items that ship themselves",
+        "description": "Owners and due dates are detected automatically and pushed to Slack, Lark or email.",
+        "icon": "RiTodoLine",
+        "image": {
+          "src": "/imgs/features/3.png"
+        }
+      },
+      {
+        "title": "Enterprise-grade privacy",
+        "description": "Encryption, isolated storage and granular permissions keep sensitive conversations safe.",
+        "icon": "RiShieldKeyholeLine",
+        "image": {
+          "src": "/imgs/features/4.png"
+        }
+      }
+    ]
+  },
+  "usage": {
+    "name": "usage",
+    "title": "Three simple steps",
+    "description": "From board meetings to customer calls, every workflow follows the same playbook:",
+    "image": {
+      "src": "/imgs/features/5.png"
+    },
+    "image_position": "left",
+    "text_align": "center",
+    "items": [
+      {
+        "title": "Record or import",
+        "description": "Upload mp3/mp4, capture live audio or connect Zoom, Teams, Tencent Meeting, etc.",
+        "image": {
+          "src": "/imgs/features/6.png"
+        }
+      },
+      {
+        "title": "Auto transcribe & edit",
+        "description": "AI diarizes speakers, generates editable transcripts and supports multi-user proofreading.",
+        "image": {
+          "src": "/imgs/features/7.png"
+        }
+      },
+      {
+        "title": "Generate summaries",
+        "description": "One click to produce highlights, risks and next steps, shareable with any workspace.",
+        "image": {
+          "src": "/imgs/features/8.png"
+        }
+      },
+      {
+        "title": "Dispatch action items",
+        "description": "Sync tasks to Jira, Lark, Slack or email so every owner knows what’s next.",
+        "image": {
+          "src": "/imgs/features/9.png"
+        }
+      }
+    ]
+  },
+  "feature": {
+    "name": "feature",
+    "title": "Product capabilities",
+    "description": "A full pipeline covering audio transcription, AI reasoning and task automation.",
+    "items": [
+      {
+        "title": "Transcript engine",
+        "description": "Custom acoustic model + Whisper powering 30+ languages and accents.",
+        "icon": "RiMic2Line"
+      },
+      {
+        "title": "Speaker intelligence",
+        "description": "Identify speakers, keywords and sentiment to make dialogs searchable.",
+        "icon": "RiTeamLine"
+      },
+      {
+        "title": "Summary templates",
+        "description": "Sales recap, weekly standup, investor update and more tailored prompt packs.",
+        "icon": "RiDraftLine"
+      },
+      {
+        "title": "Action routing",
+        "description": "Auto assign owners and deadlines, push to your task stack instantly.",
+        "icon": "RiShareForwardLine"
+      },
+      {
+        "title": "Knowledge sync",
+        "description": "Publish structured notes to Confluence, Notion or Feishu Docs in one click.",
+        "icon": "RiBookletLine"
+      },
+      {
+        "title": "Security & audit",
+        "description": "Granular access control, download watermarking and audit logs for compliance.",
+        "icon": "RiLockPasswordLine"
+      }
+    ]
+  },
+  "stats": {
+    "name": "stats",
+    "label": "Metrics",
+    "title": "Proof in numbers",
+    "description": "Customers rely on ZhaiYao to save hours every single week.",
+    "icon": "FaRegHeart",
+    "items": [
+      {
+        "title": "Hours transcribed",
+        "label": "3,200+",
+        "description": "recorded"
+      },
+      {
+        "title": "Languages supported",
+        "label": "30",
+        "description": "and counting"
+      },
+      {
+        "title": "Time saved",
+        "label": "68%",
+        "description": "avg per meeting"
+      }
+    ]
+  },
+  "testimonial": {
+    "name": "testimonial",
+    "label": "Voices",
+    "title": "What teams say",
+    "description": "Feedback from product, sales, consulting and finance orgs.",
+    "icon": "GoThumbsup",
+    "items": [
+      {
+        "title": "Shan Li",
+        "label": "PMO lead, Shanghai tech company",
+        "description": "Weekly reviews used to take half a day. Now summaries arrive right after the call and everyone collaborates in one link.",
+        "image": {
+          "src": "/imgs/users/1.png"
+        }
+      },
+      {
+        "title": "Brian Wang",
+        "label": "Head of Global Sales",
+        "description": "Multilingual accuracy exceeded expectations and auto action items inside Slack helped us close faster.",
+        "image": {
+          "src": "/imgs/users/2.png"
+        }
+      },
+      {
+        "title": "Alex Chen",
+        "label": "Partner, VC firm",
+        "description": "Every portfolio review is searchable with clear conclusions and permission controls for LPs.",
+        "image": {
+          "src": "/imgs/users/3.png"
+        }
+      },
+      {
+        "title": "Isabella Torres",
+        "label": "Consultant",
+        "description": "Scenario templates speed up deliverables and keep clients impressed.",
+        "image": {
+          "src": "/imgs/users/4.png"
+        }
+      },
+      {
+        "title": "Zining Zhao",
+        "label": "HRBP",
+        "description": "Trainings and interviews sync into a searchable knowledge base so onboarding is painless.",
+        "image": {
+          "src": "/imgs/users/5.png"
+        }
+      },
+      {
+        "title": "Mateo Diaz",
+        "label": "Remote founder",
+        "description": "Mobile summaries mean I never miss the highlights even across time zones.",
+        "image": {
+          "src": "/imgs/users/6.png"
+        }
+      }
+    ]
+  },
+  "faq": {
+    "name": "faq",
+    "label": "FAQ",
+    "title": "Frequently asked",
+    "description": "Ping us via email or community if you need anything else.",
+    "items": [
+      {
+        "title": "What sources can I upload?",
+        "description": "mp3, wav, m4a, mp4, mov and direct links from Zoom, Google Meet, Tencent Meeting, Lark Meeting and more."
+      },
+      {
+        "title": "How accurate is transcription?",
+        "description": "Mandarin accuracy reaches 96%+ in typical environments, English and mixed conversations average 92%+ and improve with custom dictionaries."
+      },
+      {
+        "title": "Can I edit summaries?",
+        "description": "Yes. Both transcripts and summaries are collaborative and versioned automatically."
+      },
+      {
+        "title": "How do you secure data?",
+        "description": "Encrypted at rest and in transit, private deployment options plus audit logs and role-based permissions."
+      },
+      {
+        "title": "Which integrations are available?",
+        "description": "Slack, Lark, DingTalk, Notion, Confluence, Jira and email today – more via API."
+      },
+      {
+        "title": "Do you have an enterprise plan?",
+        "description": "Yes, including private cloud deployment and custom models. Contact sales for details."
+      }
+    ]
+  },
+  "cta": {
+    "name": "cta",
+    "title": "Make every meeting count",
+    "description": "Use ZhaiYao to record, summarize and route follow-ups automatically.",
+    "buttons": [
+      {
+        "title": "Book a demo",
+        "url": "/pricing",
+        "target": "_self",
+        "icon": "GoArrowUpRight"
+      },
+      {
+        "title": "Download product brief",
+        "url": "https://docs.shipany.ai",
+        "target": "_blank",
+        "variant": "outline"
+      }
+    ]
+  },
+  "footer": {
+    "name": "footer",
+    "brand": {
+      "title": "ZhaiYao",
+      "description": "ZhaiYao is the AI meeting intelligence platform for high-frequency teams, combining transcription, summaries and action routing.",
+      "logo": {
+        "src": "/logo.png",
+        "alt": "ZhaiYao"
+      },
+      "url": "/"
+    },
+    "copyright": "© 2025 • ZhaiYao. All rights reserved.",
+    "nav": {
+      "items": [
+        {
+          "title": "Product",
+          "children": [
+            {
+              "title": "Highlights",
+              "url": "/#feature",
+              "target": "_self"
+            },
+            {
+              "title": "Customers",
+              "url": "/#showcase",
+              "target": "_self"
+            },
+            {
+              "title": "Pricing",
+              "url": "/#pricing",
+              "target": "_self"
+            }
+          ]
+        },
+        {
+          "title": "Resources",
+          "children": [
+            {
+              "title": "Product brief",
+              "url": "https://docs.shipany.ai",
+              "target": "_blank"
+            },
+            {
+              "title": "API",
+              "url": "https://shipany.ai/templates",
+              "target": "_blank"
+            },
+            {
+              "title": "Deployment guide",
+              "url": "https://docs.shipany.ai/deploy/deploy-to-vercel",
+              "target": "_blank"
+            }
+          ]
+        },
+        {
+          "title": "Partners",
+          "children": [
+            {
+              "title": "ShipAny",
+              "url": "https://shipany.ai",
+              "target": "_blank"
+            },
+            {
+              "title": "ThinkAny",
+              "url": "https://thinkany.ai",
+              "target": "_blank"
+            },
+            {
+              "title": "Pagen",
+              "url": "https://pagen.so",
+              "target": "_blank"
+            }
+          ]
+        }
+      ]
+    },
+    "social": {
+      "items": [
+        {
+          "title": "X",
+          "icon": "RiTwitterXFill",
+          "url": "https://x.com/shipanyai",
+          "target": "_blank"
+        },
+        {
+          "title": "Github",
+          "icon": "RiGithubFill",
+          "url": "https://github.com/shipanyai",
+          "target": "_blank"
+        },
+        {
+          "title": "Community",
+          "icon": "RiDiscordFill",
+          "url": "https://discord.gg/HQNnrzjZQS",
+          "target": "_blank"
+        },
+        {
+          "title": "Email",
+          "icon": "RiMailLine",
+          "url": "mailto:support@shipany.ai",
+          "target": "_self"
+        }
+      ]
+    },
+    "agreement": {
+      "items": [
+        {
+          "title": "Privacy Policy",
+          "url": "/privacy-policy"
+        },
+        {
+          "title": "Terms of Service",
+          "url": "/terms-of-service"
+        }
+      ]
+    }
+  }
+}
