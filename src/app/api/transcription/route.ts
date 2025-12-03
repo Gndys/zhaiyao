@@ -280,6 +280,11 @@ async function transcribeWithApimart(file: File) {
   };
 }
 
+type ApimartSegment = {
+  text?: string;
+  content?: string;
+};
+
 function extractApimartTranscript(data: any) {
   if (!data) return "";
   if (typeof data === "string") return data;
@@ -304,11 +309,8 @@ function extractApimartTranscript(data: any) {
   }
 
   if (Array.isArray(data?.segments)) {
-    return data.segments
-      .map(
-        (segment: { text?: string; content?: string }) =>
-          segment?.text || segment?.content
-      )
+    return (data.segments as ApimartSegment[])
+      .map((segment) => segment?.text || segment?.content)
       .filter(Boolean)
       .join("\n");
   }

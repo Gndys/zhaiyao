@@ -77,6 +77,9 @@ export function TranscriptionUploader() {
     await navigator.clipboard.writeText(transcript);
   };
 
+  const isUploading = status === "uploading";
+  const showReset = !isUploading;
+
   return (
     <div className="space-y-8 rounded-3xl border border-border/60 bg-card/50 p-8 shadow-lg shadow-black/5">
       <form className="space-y-6" onSubmit={handleSubmit}>
@@ -99,15 +102,15 @@ export function TranscriptionUploader() {
         {error && <p className="text-sm text-red-500">{error}</p>}
 
         <div className="flex flex-wrap gap-3">
-          <Button type="submit" disabled={status === "uploading"}>
-            {status === "uploading" ? "上传中..." : "开始转写"}
+          <Button type="submit" disabled={isUploading}>
+            {isUploading ? "上传中..." : "开始转写"}
           </Button>
-          {status !== "uploading" && (
+          {showReset && (
             <Button
               type="button"
               variant="outline"
               onClick={handleReset}
-              disabled={status === "uploading"}
+              disabled={isUploading}
             >
               重新选择
             </Button>
@@ -115,15 +118,15 @@ export function TranscriptionUploader() {
         </div>
       </form>
 
-      {(status === "uploading" || status === "done") && (
+      {(isUploading || status === "done") && (
         <div className="space-y-2 rounded-2xl bg-muted/50 p-4 text-sm text-muted-foreground">
           <p>
             任务状态：
             <span className="font-medium">
-              {taskStatus || (status === "uploading" ? "处理音频中" : "完成")}
+              {taskStatus || (isUploading ? "处理音频中" : "完成")}
             </span>
           </p>
-          {status === "uploading" && (
+          {isUploading && (
             <p>音频已上传至 OSS，正在调用 Apimart Whisper，请稍候。</p>
           )}
         </div>
