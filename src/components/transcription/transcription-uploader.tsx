@@ -61,6 +61,9 @@ const workflowSteps = [
 
 type WorkflowKey = (typeof workflowSteps)[number]["key"];
 
+const SKIP_HEALTH_CHECK =
+  process.env.NEXT_PUBLIC_TRANSCRIPTION_SKIP_HEALTHCHECK === "true";
+
 export function TranscriptionUploader() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -74,12 +77,13 @@ export function TranscriptionUploader() {
   const [objectKey, setObjectKey] = useState("");
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   const [checkingHealth, setCheckingHealth] = useState(false);
+  const [fileUrl, setFileUrl] = useState("");
 
   const isUploading = status === "uploading";
   const showReset = !isUploading;
-  const readyForUpload = Boolean(
-    health && health.env?.ok && health.oss?.ok && health.apimart?.ok
-  );
+  const readyForUpload =
+    SKIP_HEALTH_CHECK ||
+    Boolean(health && health.env?.ok && health.oss?.ok && health.apimart?.ok);
 
   useEffect(() => {
     return () => {
@@ -104,6 +108,42 @@ export function TranscriptionUploader() {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+  };
+
+  const uploadAndTranscribe = (formData: FormData) => {
+    return new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/transcription");
+      xhr.responseType = "text";
+
+      xhr.onload = () => {
+        try {
+          const text = xhr.responseText || "{}";
+          const data = text ? JSON.parse(text) : {};
+          resolve({ status: xhr.status, body: data });
+        } catch (error) {
+          reject(new Error("解析转写结果失败。"));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error("网络异常，无法连接服务器。"));
+      };
+
+      xhr.onabort = () => {
+        reject(new Error("请求已取消。"));
+      };
+
+      xhr.upload.addEventListener("loadend", () => {
+        setStage("transcribing");
+      });
+
+      xhr.upload.addEventListener("error", () => {
+        setStage("error-upload");
+      });
+
+      xhr.send(formData);
+    });
   };
 
   const handleHealthCheck = async () => {
@@ -150,8 +190,16 @@ export function TranscriptionUploader() {
     }
 
     const file = fileInputRef.current?.files?.[0];
-    if (!file) {
-      setError("请先选择一个音频文件。");
+    const trimmedUrl = fileUrl.trim();
+    const useRemoteUrl = Boolean(trimmedUrl);
+
+    if (file && useRemoteUrl) {
+      setError("请选择上传文件或输入链接中的一种方式。");
+      return;
+    }
+
+    if (!file && !useRemoteUrl) {
+      setError("请先选择音频文件或填写 OSS 链接。");
       return;
     }
 
@@ -160,19 +208,33 @@ export function TranscriptionUploader() {
     startTimer();
 
     const body = new FormData();
-    body.append("file", file);
+    if (file) {
+      body.append("file", file);
+    }
+    if (useRemoteUrl && !file) {
+      body.append("fileUrl", trimmedUrl);
+    }
 
     try {
-      const response = await fetch("/api/transcription", {
-        method: "POST",
-        body,
-      });
+      let result: any;
+      if (useRemoteUrl && !file) {
+        setStage("transcribing");
+        const response = await fetch("/api/transcription", {
+          method: "POST",
+          body,
+        });
+        result = await response.json();
+        if (!response.ok) {
+          throw new Error(result?.error || "转写失败，请稍后再试。");
+        }
+      } else {
+        const { status: httpStatus, body: xhrResult } =
+          await uploadAndTranscribe(body);
 
-      setStage("transcribing");
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result?.error || "转写失败，请稍后再试。");
+        if (httpStatus >= 400) {
+          throw new Error(xhrResult?.error || "转写失败，请稍后再试。");
+        }
+        result = xhrResult;
       }
 
       setAudioUrl(result.audioUrl);
@@ -206,6 +268,7 @@ export function TranscriptionUploader() {
     setAudioUrl("");
     setObjectKey("");
     setElapsedMs(0);
+    setFileUrl("");
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -254,9 +317,14 @@ export function TranscriptionUploader() {
             {readyForUpload ? "（已通过）" : "（未通过）"}
           </p>
         )}
-        {!readyForUpload && (
+        {!readyForUpload && !SKIP_HEALTH_CHECK && (
           <p className="text-xs text-amber-600">
             提交转写前请先完成一次链路检测。
+          </p>
+        )}
+        {SKIP_HEALTH_CHECK && (
+          <p className="text-xs text-muted-foreground">
+            已开启开发模式：可跳过链路检测直接提交。
           </p>
         )}
       </div>
@@ -271,11 +339,28 @@ export function TranscriptionUploader() {
               ref={fileInputRef}
               id="audio-file"
               type="file"
-              accept="audio/*"
-              required
+              accept="audio/*,video/*"
+              disabled={isUploading}
             />
             <p className="text-sm text-muted-foreground">
-              支持 mp3、m4a、wav 等常见格式，单个文件上限 50MB。
+              支持 mp3、m4a、wav、mp4 等常见音视频格式（50MB 以内）。
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="audio-url" className="text-base font-medium">
+              或输入 OSS 链接
+            </Label>
+            <Input
+              id="audio-url"
+              type="url"
+              placeholder="https://bucket.oss-cn-xxx.aliyuncs.com/example.mp3"
+              value={fileUrl}
+              onChange={(event) => setFileUrl(event.target.value)}
+              disabled={isUploading}
+            />
+            <p className="text-sm text-muted-foreground">
+              链接会下载音/视频并在后台自动提取音频后调用 APIMart Whisper。
             </p>
           </div>
 
@@ -296,7 +381,7 @@ export function TranscriptionUploader() {
               </Button>
             )}
           </div>
-          {!readyForUpload && (
+          {!readyForUpload && !SKIP_HEALTH_CHECK && (
             <p className="text-xs text-muted-foreground">
               * 链路检测通过后按钮才会启用。
             </p>

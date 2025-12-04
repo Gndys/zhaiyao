@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { createHmac, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { insertAudioUpload } from "@/models/audio-upload";
 import { getUserUuid } from "@/services/user";
 
@@ -7,6 +11,32 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const AUDIO_FILE_EXTENSIONS =
+  /\.(mp3|m4a|wav|flac|aac|ogg|wma|webm)$/i;
+const VIDEO_FILE_EXTENSIONS = /\.(mp4|mkv|mov|avi|flv|webm)$/i;
+
+const AUDIO_OPTIMIZATION_ENABLED =
+  process.env.AUDIO_OPTIMIZATION_ENABLED !== "false";
+const AUDIO_OPTIMIZATION_THRESHOLD = Number(
+  process.env.AUDIO_OPTIMIZATION_THRESHOLD ?? 15 * 1024 * 1024
+);
+const AUDIO_OPTIMIZATION_BITRATE =
+  process.env.AUDIO_OPTIMIZATION_TARGET_BITRATE || "48k";
+const AUDIO_OPTIMIZATION_SAMPLE_RATE =
+  process.env.AUDIO_OPTIMIZATION_TARGET_SAMPLE_RATE || "16000";
+const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
+const AUDIO_SEGMENT_ENABLED =
+  process.env.AUDIO_SEGMENT_ENABLED === "true";
+const AUDIO_SEGMENT_MIN_SIZE = Number(
+  process.env.AUDIO_SEGMENT_MIN_SIZE ?? 18 * 1024 * 1024
+);
+const AUDIO_SEGMENT_DURATION = Number(
+  process.env.AUDIO_SEGMENT_DURATION ?? 600
+);
+const AUDIO_SEGMENT_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.AUDIO_SEGMENT_CONCURRENCY ?? 4)
+);
 
 const REQUIRED_ENV_VARS = [
   "APIMART_API_KEY",
@@ -33,6 +63,9 @@ export async function POST(req: Request) {
   let safeFilename = "audio-file";
 
   const recordUpload = async (status: string, errorMessage?: string) => {
+    if (!isHistoryEnabled()) {
+      return;
+    }
     if (!uploadResult || recordedHistory) {
       return;
     }
@@ -57,19 +90,41 @@ export async function POST(req: Request) {
     validateEnv();
     user_uuid = await getUserUuid();
     const formData = await req.formData();
-    const file = formData.get("file");
+    const fileEntry = formData.get("file");
+    const remoteUrlEntry = formData.get("fileUrl");
+    const remoteUrl =
+      typeof remoteUrlEntry === "string" ? remoteUrlEntry.trim() : "";
+
+    let fileSource: "upload" | "url" = "upload";
+    let file: File | null = null;
+
+    if (fileEntry && fileEntry instanceof File) {
+      file = fileEntry;
+    } else if (remoteUrl) {
+      fileSource = "url";
+      file = await fetchRemoteFile(remoteUrl);
+    }
+
     console.log("[transcription] incoming request");
 
-    if (!file || !(file instanceof File)) {
+    if (!file) {
       return NextResponse.json(
-        { error: "请选择一个音频文件后再上传。" },
+        { error: "请上传音频文件或提供一个可访问的音频链接。" },
         { status: 400 }
       );
     }
 
-    if (!file.type.startsWith("audio/")) {
+    let transcriptionFile: File = file;
+    let convertedFromVideo = false;
+
+    if (!isAudioFile(transcriptionFile) && isVideoFile(transcriptionFile)) {
+      transcriptionFile = await convertVideoToAudio(transcriptionFile);
+      convertedFromVideo = true;
+    }
+
+    if (!isAudioFile(transcriptionFile)) {
       return NextResponse.json(
-        { error: "仅支持音频文件，请重新选择。" },
+        { error: "仅支持音频文件，请重新选择或检查链接。" },
         { status: 400 }
       );
     }
@@ -81,17 +136,26 @@ export async function POST(req: Request) {
       );
     }
 
-    safeFilename = file.name || safeFilename;
+    safeFilename = transcriptionFile.name || safeFilename;
 
     console.log("[transcription] file validated", {
       filename: file.name,
       size: file.size,
       type: file.type,
+      source: fileSource,
+      convertedFromVideo,
     });
 
-    uploadResult = await uploadToOSS(file);
-    console.log("[transcription] uploaded to OSS", uploadResult);
-    const transcription = await transcribeWithApimart(file);
+    if (fileSource === "upload") {
+      uploadResult = await uploadToOSS(file);
+      console.log("[transcription] uploaded to OSS", uploadResult);
+    } else {
+      uploadResult = buildUploadResultFromUrl(remoteUrl);
+      console.log("[transcription] using remote OSS object", uploadResult);
+    }
+    const optimizedFile = await optimizeAudioForTranscription(transcriptionFile);
+    const segmentedFiles = await segmentAudioFile(optimizedFile);
+    const transcription = await transcribeSegments(segmentedFiles);
     console.log("[transcription] apimart response", {
       hasTranscript: Boolean(transcription.transcript),
     });
@@ -114,6 +178,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+function isHistoryEnabled() {
+  if (process.env.DISABLE_AUDIO_UPLOAD_HISTORY === "true") {
+    return false;
+  }
+  return Boolean(process.env.DATABASE_URL);
 }
 
 export async function GET() {
@@ -274,9 +345,65 @@ async function transcribeWithApimart(file: File) {
   }
 
   return {
-    transcript,
+    transcript: normalizeTranscriptText(transcript),
     vendor: "apimart-whisper",
     raw: data,
+  };
+}
+
+async function transcribeSegments(files: File[]) {
+  if (files.length === 0) {
+    throw new Error("没有可用的音频片段。");
+  }
+  if (files.length === 1) {
+    return transcribeWithApimart(files[0]);
+  }
+
+  console.log("[transcription] processing segments", {
+    segments: files.length,
+    concurrency: AUDIO_SEGMENT_CONCURRENCY,
+  });
+
+  const results: Awaited<ReturnType<typeof transcribeWithApimart>>[] =
+    new Array(files.length);
+  let cursor = 0;
+  const concurrency = Math.min(AUDIO_SEGMENT_CONCURRENCY, files.length);
+
+  const worker = async (workerIndex: number) => {
+    while (true) {
+      const current = cursor++;
+      if (current >= files.length) break;
+
+      const segmentFile = files[current];
+      console.log("[transcription] segment start", {
+        index: current + 1,
+        total: files.length,
+        worker: workerIndex,
+      });
+      const result = await transcribeWithApimart(segmentFile);
+      results[current] = result;
+      console.log("[transcription] segment done", {
+        index: current + 1,
+        total: files.length,
+        worker: workerIndex,
+        hasTranscript: Boolean(result.transcript),
+      });
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: concurrency }, (_, index) => worker(index + 1))
+  );
+
+  const transcript = results
+    .map((result) => result?.transcript || "")
+    .filter(Boolean)
+    .join("\n\n");
+
+  return {
+    transcript: normalizeTranscriptText(transcript),
+    vendor: "apimart-whisper",
+    raw: results.map((result) => result?.raw),
   };
 }
 
@@ -316,4 +443,290 @@ function extractApimartTranscript(data: any) {
   }
 
   return "";
+}
+
+function isAudioFile(file: File) {
+  const type = file.type || "";
+  if (type.startsWith("audio/")) {
+    return true;
+  }
+  const name = file.name || "";
+  return AUDIO_FILE_EXTENSIONS.test(name);
+}
+
+function isVideoFile(file: File) {
+  const type = file.type || "";
+  if (type.startsWith("video/")) {
+    return true;
+  }
+  const name = file.name || "";
+  return VIDEO_FILE_EXTENSIONS.test(name);
+}
+
+function normalizeTranscriptText(text: string) {
+  if (!text) return text;
+  if (process.env.TRANSCRIPT_SIMPLIFY !== "true") {
+    return text;
+  }
+  return convertTraditionalToSimplified(text);
+}
+
+function convertTraditionalToSimplified(input: string) {
+  // Minimal mapping covering常见繁体；可替换为更完整方案
+  const map: Record<string, string> = {
+    體: "体",
+    頭: "头",
+    鬧: "闹",
+    愛: "爱",
+    說: "说",
+    觀: "观",
+    視: "视",
+    願: "愿",
+    變: "变",
+    讓: "让",
+    會: "会",
+    開: "开",
+    對: "对",
+    這: "这",
+    那: "那",
+    為: "为",
+    於: "于",
+    風: "风",
+    雲: "云",
+    課: "课",
+    將: "将",
+    夢: "梦",
+    餘: "余",
+    電: "电",
+    錄: "录",
+    樂: "乐",
+    醫: "医",
+  };
+
+  return input.replace(/./g, (char) => map[char] || char);
+}
+
+async function segmentAudioFile(file: File) {
+  if (!AUDIO_SEGMENT_ENABLED) {
+    return [file];
+  }
+  if (file.size <= AUDIO_SEGMENT_MIN_SIZE) {
+    return [file];
+  }
+  if (!AUDIO_SEGMENT_DURATION || AUDIO_SEGMENT_DURATION <= 0) {
+    return [file];
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const tempDir = await mkdtemp(path.join(tmpdir(), "transcription-segments-"));
+  const outputTemplate = path.join(tempDir, "segment-%03d.mp3");
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const args = [
+        "-i",
+        "pipe:0",
+        "-f",
+        "segment",
+        "-segment_time",
+        String(AUDIO_SEGMENT_DURATION),
+        "-c",
+        "copy",
+        "-reset_timestamps",
+        "1",
+        outputTemplate,
+      ];
+
+      const ffmpeg = spawn(FFMPEG_PATH, args);
+      const errors: Buffer[] = [];
+
+      ffmpeg.stderr.on("data", (chunk) => errors.push(chunk));
+      ffmpeg.on("error", (error) => {
+        reject(error);
+      });
+      ffmpeg.on("close", (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(
+            new Error(
+              `[ffmpeg] segment exit code ${code}: ${Buffer.concat(errors).toString()}`
+            )
+          );
+        }
+      });
+
+      ffmpeg.stdin.on("error", (error) => {
+        console.error("[transcription] segment stdin error", error);
+      });
+
+      ffmpeg.stdin.write(buffer);
+      ffmpeg.stdin.end();
+    });
+
+    const files = (await readdir(tempDir))
+      .filter((name) => name.startsWith("segment-"))
+      .sort();
+
+    if (files.length <= 1) {
+      return [file];
+    }
+
+    console.log("[transcription] audio segmented", {
+      count: files.length,
+      duration: AUDIO_SEGMENT_DURATION,
+    });
+
+    const segments: File[] = [];
+    for (const name of files) {
+      const segBuffer = await readFile(path.join(tempDir, name));
+      segments.push(new File([segBuffer], name, { type: "audio/mpeg" }));
+    }
+
+    return segments;
+  } catch (error) {
+    console.error("[transcription] segment audio failed", error);
+    return [file];
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function convertVideoToAudio(file: File) {
+  console.log("[transcription] converting video to audio", {
+    filename: file.name,
+    type: file.type,
+    size: file.size,
+  });
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const audio = await transcodeToMp3(buffer);
+  if (!audio) {
+    throw new Error("无法从视频中提取音频，请检查文件格式。");
+  }
+  const filename = ensureMp3Extension(file.name || "video-audio");
+  return new File([audio], filename, { type: "audio/mpeg" });
+}
+
+async function optimizeAudioForTranscription(file: File) {
+  if (!AUDIO_OPTIMIZATION_ENABLED) {
+    return file;
+  }
+  if (file.size <= AUDIO_OPTIMIZATION_THRESHOLD) {
+    return file;
+  }
+
+  try {
+    console.log("[transcription] optimizing audio", {
+      filename: file.name,
+      size: file.size,
+      threshold: AUDIO_OPTIMIZATION_THRESHOLD,
+    });
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const optimized = await transcodeToMp3(buffer);
+    if (!optimized) {
+      return file;
+    }
+    const optimizedName = ensureMp3Extension(file.name || "audio-file");
+    return new File([optimized], optimizedName, {
+      type: "audio/mpeg",
+    });
+  } catch (error) {
+    console.error("[transcription] audio optimization failed", error);
+    return file;
+  }
+}
+
+function ensureMp3Extension(name: string) {
+  if (name.toLowerCase().endsWith(".mp3")) return name;
+  return `${name.replace(/\.[^/.]+$/, "") || "audio"}.mp3`;
+}
+
+function buildUploadResultFromUrl(url: string) {
+  return {
+    url,
+    key: deriveObjectKeyFromUrl(url),
+  };
+}
+
+async function transcodeToMp3(buffer: Buffer) {
+  return new Promise<Buffer | null>((resolve) => {
+    const args = [
+      "-i",
+      "pipe:0",
+      "-ac",
+      "1",
+      "-ar",
+      AUDIO_OPTIMIZATION_SAMPLE_RATE,
+      "-b:a",
+      AUDIO_OPTIMIZATION_BITRATE,
+      "-f",
+      "mp3",
+      "pipe:1",
+    ];
+
+    const ffmpeg = spawn(FFMPEG_PATH, args);
+    const chunks: Buffer[] = [];
+    const errors: Buffer[] = [];
+
+    ffmpeg.stdout.on("data", (chunk) => chunks.push(chunk));
+    ffmpeg.stderr.on("data", (chunk) => errors.push(chunk));
+    ffmpeg.on("error", (error) => {
+      console.error("[transcription] ffmpeg spawn failed", error);
+      resolve(null);
+    });
+    ffmpeg.on("close", (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(chunks));
+      } else {
+        console.error("[transcription] ffmpeg exited", {
+          code,
+          stderr: Buffer.concat(errors).toString(),
+        });
+        resolve(null);
+      }
+    });
+
+    ffmpeg.stdin.on("error", (error) => {
+      console.error("[transcription] ffmpeg stdin error", error);
+    });
+
+    ffmpeg.stdin.write(buffer);
+    ffmpeg.stdin.end();
+  });
+}
+
+function deriveObjectKeyFromUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+  } catch {
+    return value;
+  }
+}
+
+async function fetchRemoteFile(url: string) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `无法下载音频链接：${response.status} ${response.statusText}`
+    );
+  }
+
+  const contentType =
+    response.headers.get("content-type") || "application/octet-stream";
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const filename = getFilenameFromUrl(url);
+  return new File([buffer], filename, { type: contentType });
+}
+
+function getFilenameFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const basename = parsed.pathname.split("/").filter(Boolean).pop();
+    return basename ? decodeURIComponent(basename) : "remote-audio";
+  } catch {
+    return "remote-audio";
+  }
 }
