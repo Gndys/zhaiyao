@@ -27,6 +27,11 @@
               "icon": "RiMic2Line"
             },
             {
+              "title": "Live Voice Capture",
+              "url": "/realtime",
+              "icon": "RiLiveLine"
+            },
+            {
               "title": "Transcript Summary",
               "url": "/trial",
               "icon": "RiFileListLine"

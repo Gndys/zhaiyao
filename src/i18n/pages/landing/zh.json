@@ -27,6 +27,11 @@
               "icon": "RiMic2Line"
             },
             {
+              "title": "实时语音转写",
+              "url": "/realtime",
+              "icon": "RiLiveLine"
+            },
+            {
               "title": "逐字稿总结",
               "url": "/trial",
               "icon": "RiFileListLine"

@@ -24,6 +24,8 @@ const AUDIO_OPTIMIZATION_BITRATE =
   process.env.AUDIO_OPTIMIZATION_TARGET_BITRATE || "48k";
 const AUDIO_OPTIMIZATION_SAMPLE_RATE =
   process.env.AUDIO_OPTIMIZATION_TARGET_SAMPLE_RATE || "16000";
+const AUDIO_OPTIMIZATION_OUTPUT_FORMAT =
+  process.env.AUDIO_OPTIMIZATION_OUTPUT_FORMAT || "mp3";
 const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
 const AUDIO_SEGMENT_ENABLED =
   process.env.AUDIO_SEGMENT_ENABLED === "true";
@@ -118,7 +120,7 @@ export async function POST(req: Request) {
     let convertedFromVideo = false;
 
     if (!isAudioFile(transcriptionFile) && isVideoFile(transcriptionFile)) {
-      transcriptionFile = await convertVideoToAudio(transcriptionFile);
+      transcriptionFile = await convertVideoToWav(transcriptionFile);
       convertedFromVideo = true;
     }
 
@@ -518,8 +520,12 @@ async function segmentAudioFile(file: File) {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
+  const isWavSegment =
+    file.type === "audio/wav" || file.name?.toLowerCase().endsWith(".wav");
+  const segmentExt = isWavSegment ? "wav" : "mp3";
+  const segmentMime = isWavSegment ? "audio/wav" : "audio/mpeg";
   const tempDir = await mkdtemp(path.join(tmpdir(), "transcription-segments-"));
-  const outputTemplate = path.join(tempDir, "segment-%03d.mp3");
+  const outputTemplate = path.join(tempDir, `segment-%03d.${segmentExt}`);
 
   try {
     await new Promise<void>((resolve, reject) => {
@@ -530,10 +536,15 @@ async function segmentAudioFile(file: File) {
         "segment",
         "-segment_time",
         String(AUDIO_SEGMENT_DURATION),
-        "-c",
-        "copy",
         "-reset_timestamps",
         "1",
+        "-ac",
+        "1",
+        "-ar",
+        AUDIO_OPTIMIZATION_SAMPLE_RATE,
+        ...(isWavSegment
+          ? ["-c:a", "pcm_s16le"]
+          : ["-c:a", "libmp3lame", "-b:a", AUDIO_OPTIMIZATION_BITRATE]),
         outputTemplate,
       ];
 
@@ -580,7 +591,7 @@ async function segmentAudioFile(file: File) {
     const segments: File[] = [];
     for (const name of files) {
       const segBuffer = await readFile(path.join(tempDir, name));
-      segments.push(new File([segBuffer], name, { type: "audio/mpeg" }));
+      segments.push(new File([segBuffer], name, { type: segmentMime }));
     }
 
     return segments;
@@ -592,7 +603,7 @@ async function segmentAudioFile(file: File) {
   }
 }
 
-async function convertVideoToAudio(file: File) {
+async function convertVideoToWav(file: File) {
   console.log("[transcription] converting video to audio", {
     filename: file.name,
     type: file.type,
@@ -600,12 +611,12 @@ async function convertVideoToAudio(file: File) {
   });
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  const audio = await transcodeToMp3(buffer);
+  const audio = await extractAudioAsWav(buffer);
   if (!audio) {
     throw new Error("无法从视频中提取音频，请检查文件格式。");
   }
-  const filename = ensureMp3Extension(file.name || "video-audio");
-  return new File([audio], filename, { type: "audio/mpeg" });
+  const filename = ensureWavExtension(file.name || "video-audio");
+  return new File([audio], filename, { type: "audio/wav" });
 }
 
 async function optimizeAudioForTranscription(file: File) {
@@ -623,13 +634,13 @@ async function optimizeAudioForTranscription(file: File) {
       threshold: AUDIO_OPTIMIZATION_THRESHOLD,
     });
     const buffer = Buffer.from(await file.arrayBuffer());
-    const optimized = await transcodeToMp3(buffer);
+    const optimized = await transcodeAudio(buffer);
     if (!optimized) {
       return file;
     }
-    const optimizedName = ensureMp3Extension(file.name || "audio-file");
-    return new File([optimized], optimizedName, {
-      type: "audio/mpeg",
+    const optimizedName = ensureOptimizedExtension(file.name || "audio-file");
+    return new File([optimized.buffer], optimizedName, {
+      type: optimized.mime,
     });
   } catch (error) {
     console.error("[transcription] audio optimization failed", error);
@@ -642,6 +653,18 @@ function ensureMp3Extension(name: string) {
   return `${name.replace(/\.[^/.]+$/, "") || "audio"}.mp3`;
 }
 
+function ensureWavExtension(name: string) {
+  if (name.toLowerCase().endsWith(".wav")) return name;
+  return `${name.replace(/\.[^/.]+$/, "") || "audio"}.wav`;
+}
+
+function ensureOptimizedExtension(name: string) {
+  if (AUDIO_OPTIMIZATION_OUTPUT_FORMAT === "wav") {
+    return ensureWavExtension(name);
+  }
+  return ensureMp3Extension(name);
+}
+
 function buildUploadResultFromUrl(url: string) {
   return {
     url,
@@ -649,8 +672,10 @@ function buildUploadResultFromUrl(url: string) {
   };
 }
 
-async function transcodeToMp3(buffer: Buffer) {
-  return new Promise<Buffer | null>((resolve) => {
+async function transcodeAudio(buffer: Buffer) {
+  return new Promise<{ buffer: Buffer; mime: string } | null>((resolve) => {
+    const format = AUDIO_OPTIMIZATION_OUTPUT_FORMAT;
+    const isWav = format === "wav";
     const args = [
       "-i",
       "pipe:0",
@@ -658,10 +683,58 @@ async function transcodeToMp3(buffer: Buffer) {
       "1",
       "-ar",
       AUDIO_OPTIMIZATION_SAMPLE_RATE,
-      "-b:a",
-      AUDIO_OPTIMIZATION_BITRATE,
+      ...(isWav
+        ? ["-f", "wav"]
+        : ["-b:a", AUDIO_OPTIMIZATION_BITRATE, "-f", format || "mp3"]),
+      "pipe:1",
+    ];
+
+    const ffmpeg = spawn(FFMPEG_PATH, args);
+    const chunks: Buffer[] = [];
+    const errors: Buffer[] = [];
+
+    ffmpeg.stdout.on("data", (chunk) => chunks.push(chunk));
+    ffmpeg.stderr.on("data", (chunk) => errors.push(chunk));
+    ffmpeg.on("error", (error) => {
+      console.error("[transcription] ffmpeg spawn failed", error);
+      resolve(null);
+    });
+    ffmpeg.on("close", (code) => {
+      if (code === 0) {
+        resolve({
+          buffer: Buffer.concat(chunks),
+          mime: isWav ? "audio/wav" : "audio/mpeg",
+        });
+      } else {
+        console.error("[transcription] ffmpeg exited", {
+          code,
+          stderr: Buffer.concat(errors).toString(),
+        });
+        resolve(null);
+      }
+    });
+
+    ffmpeg.stdin.on("error", (error) => {
+      console.error("[transcription] ffmpeg stdin error", error);
+    });
+
+    ffmpeg.stdin.write(buffer);
+    ffmpeg.stdin.end();
+  });
+}
+
+async function extractAudioAsWav(buffer: Buffer) {
+  return new Promise<Buffer | null>((resolve) => {
+    const args = [
+      "-i",
+      "pipe:0",
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      AUDIO_OPTIMIZATION_SAMPLE_RATE,
       "-f",
-      "mp3",
+      "wav",
       "pipe:1",
     ];
 

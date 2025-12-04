@@ -1,6 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  DragEvent,
+  FormEvent,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,106 +14,77 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 type Status = "idle" | "uploading" | "done" | "error";
-
-type LinkStatus = {
-  ok: boolean;
-  reason?: string;
-  latency?: number;
-  issue?: "code" | "config" | "service" | "network";
-};
-
-type HealthSnapshot = {
-  env: LinkStatus;
-  oss: LinkStatus;
-  apimart: LinkStatus;
-  timestamp: number;
-};
-
-type WorkflowStage =
-  | "idle"
-  | "uploading"
-  | "transcribing"
-  | "done"
-  | "error-upload"
-  | "error-api";
-
-const ISSUE_LABELS: Record<
-  NonNullable<LinkStatus["issue"]>,
-  string
-> = {
-  code: "代码异常",
-  config: "配置异常",
-  service: "依赖服务异常",
-  network: "网络异常",
-};
-
-const workflowSteps = [
-  {
-    key: "oss",
-    title: "上传 OSS",
-    description: "签名上传音频到阿里云对象存储。",
-  },
-  {
-    key: "apimart",
-    title: "调用 Whisper",
-    description: "将音频发送到 APIMart Whisper 生成逐字稿。",
-  },
-  {
-    key: "result",
-    title: "输出逐字稿",
-    description: "返回可复制文本，并保存 OSS 地址。",
-  },
-] as const;
-
-type WorkflowKey = (typeof workflowSteps)[number]["key"];
-
-const SKIP_HEALTH_CHECK =
-  process.env.NEXT_PUBLIC_TRANSCRIPTION_SKIP_HEALTHCHECK === "true";
+const MAX_AUDIO_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 export function TranscriptionUploader() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [status, setStatus] = useState<Status>("idle");
-  const [stage, setStage] = useState<WorkflowStage>("idle");
-  const [failureStep, setFailureStep] = useState<WorkflowKey | null>(null);
-  const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState("");
-  const [audioUrl, setAudioUrl] = useState("");
-  const [objectKey, setObjectKey] = useState("");
-  const [health, setHealth] = useState<HealthSnapshot | null>(null);
-  const [checkingHealth, setCheckingHealth] = useState(false);
   const [fileUrl, setFileUrl] = useState("");
+  const [exportingDoc, setExportingDoc] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const [showLinkInput, setShowLinkInput] = useState(false);
 
   const isUploading = status === "uploading";
   const showReset = !isUploading;
-  const readyForUpload =
-    SKIP_HEALTH_CHECK ||
-    Boolean(health && health.env?.ok && health.oss?.ok && health.apimart?.ok);
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, []);
-
-  const startTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
+  const handleFileSelection = (files?: FileList | null) => {
+    if (!files?.length) return;
+    const file = files[0];
+    if (file.size > MAX_AUDIO_FILE_SIZE) {
+      setError("音频文件不能超过 50MB。");
+      return;
     }
-    setElapsedMs(0);
-    timerRef.current = setInterval(() => {
-      setElapsedMs((prev) => prev + 1000);
-    }, 1000);
+    setSelectedFile(file);
+    setFileUrl("");
+    setError(null);
   };
 
-  const stopTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    handleFileSelection(event.target.files);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragActive(false);
+    handleFileSelection(event.dataTransfer?.files);
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!isDragActive) {
+      setIsDragActive(true);
     }
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragActive(false);
+  };
+
+  const handleDropZoneClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileUrlChange = (value: string) => {
+    setFileUrl(value);
+    if (value && selectedFile) {
+      setSelectedFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const toggleLinkInput = () => {
+    setShowLinkInput((prev) => !prev);
+  };
+
+  const enableLinkInput = () => {
+    setShowLinkInput(true);
   };
 
   const uploadAndTranscribe = (formData: FormData) => {
@@ -134,62 +111,17 @@ export function TranscriptionUploader() {
         reject(new Error("请求已取消。"));
       };
 
-      xhr.upload.addEventListener("loadend", () => {
-        setStage("transcribing");
-      });
-
-      xhr.upload.addEventListener("error", () => {
-        setStage("error-upload");
-      });
-
       xhr.send(formData);
     });
-  };
-
-  const handleHealthCheck = async () => {
-    setCheckingHealth(true);
-    setHealth(null);
-    try {
-      const response = await fetch("/api/transcription/health");
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.error || "链路检测失败，请稍后重试。");
-      }
-      setHealth({
-        env: data.env,
-        oss: data.oss,
-        apimart: data.apimart,
-        timestamp: Date.now(),
-      });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "链路检测失败，请稍后重试。";
-      setHealth({
-        env: { ok: false, reason: message, issue: "code" },
-        oss: { ok: false, reason: "等待重新检测", issue: "service" },
-        apimart: { ok: false, reason: "等待重新检测", issue: "service" },
-        timestamp: Date.now(),
-      });
-      setError(message);
-    } finally {
-      setCheckingHealth(false);
-    }
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setTranscript("");
-    setAudioUrl("");
-    setObjectKey("");
-    setFailureStep(null);
+    setExportError(null);
 
-    if (!readyForUpload) {
-      setError("请先完成链路检测，确认 OSS 与 APIMart 均可用。");
-      return;
-    }
-
-    const file = fileInputRef.current?.files?.[0];
+    const file = selectedFile;
     const trimmedUrl = fileUrl.trim();
     const useRemoteUrl = Boolean(trimmedUrl);
 
@@ -199,13 +131,11 @@ export function TranscriptionUploader() {
     }
 
     if (!file && !useRemoteUrl) {
-      setError("请先选择音频文件或填写 OSS 链接。");
+      setError("请先选择音频文件或填写音频链接。");
       return;
     }
 
     setStatus("uploading");
-    setStage("uploading");
-    startTimer();
 
     const body = new FormData();
     if (file) {
@@ -218,7 +148,6 @@ export function TranscriptionUploader() {
     try {
       let result: any;
       if (useRemoteUrl && !file) {
-        setStage("transcribing");
         const response = await fetch("/api/transcription", {
           method: "POST",
           body,
@@ -237,38 +166,25 @@ export function TranscriptionUploader() {
         result = xhrResult;
       }
 
-      setAudioUrl(result.audioUrl);
-      setObjectKey(result.objectKey);
       setTranscript(result.transcript || "");
       setStatus("done");
-      setStage("done");
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "出现异常，请稍后再试。";
       setStatus("error");
-      if (message.includes("上传") || message.toLowerCase().includes("oss")) {
-        setStage("error-upload");
-        setFailureStep("oss");
-      } else {
-        setStage("error-api");
-        setFailureStep("apimart");
-      }
       setError(message);
-    } finally {
-      stopTimer();
     }
   };
 
   const handleReset = () => {
     setStatus("idle");
-    setStage("idle");
-    setFailureStep(null);
     setError(null);
     setTranscript("");
-    setAudioUrl("");
-    setObjectKey("");
-    setElapsedMs(0);
     setFileUrl("");
+    setExportError(null);
+    setSelectedFile(null);
+    setIsDragActive(false);
+    setShowLinkInput(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -279,95 +195,192 @@ export function TranscriptionUploader() {
     await navigator.clipboard.writeText(transcript);
   };
 
-  const timeline = useMemo(() => {
-    return workflowSteps.map((step) => {
-      return {
-        ...step,
-        state: getStepState(stage, step.key, failureStep),
-      };
-    });
-  }, [stage, failureStep]);
+  const handleExportWord = async () => {
+    if (!transcript.trim() || exportingDoc) {
+      return;
+    }
+    setExportError(null);
+    setExportingDoc(true);
+    try {
+      const { Document, Packer, Paragraph } = await import("docx");
+      const lines = transcript.split(/\r?\n/);
+      const doc = new Document({
+        sections: [
+          {
+            children:
+              lines.length > 0
+                ? lines.map((line) => new Paragraph(line || " "))
+                : [new Paragraph(" ")],
+          },
+        ],
+      });
+
+      const blob = await Packer.toBlob(doc);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `zhaiyao-transcript-${new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")}.docx`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (err) {
+      console.error("[transcription] export word failed", err);
+      setExportError("导出 Word 文件失败，请稍后再试。");
+    } finally {
+      setExportingDoc(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
-      <div className="space-y-4 rounded-3xl border border-border/60 bg-card/50 p-6 shadow-inner">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-base font-semibold">链路自检</p>
-            <p className="text-xs text-muted-foreground">
-              确保 OSS 上传和 APIMart Whisper 端口均可访问
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            onClick={handleHealthCheck}
-            disabled={checkingHealth}
-          >
-            {checkingHealth ? "检测中..." : "检测链路"}
-          </Button>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-3">
-          {renderLinkStatus("环境配置", health?.env, checkingHealth)}
-          {renderLinkStatus("OSS 上传", health?.oss, checkingHealth)}
-          {renderLinkStatus("APIMart API", health?.apimart, checkingHealth)}
-        </div>
-        {health?.timestamp && (
-          <p className="text-xs text-muted-foreground">
-            上次检测：{new Date(health.timestamp).toLocaleTimeString()}{" "}
-            {readyForUpload ? "（已通过）" : "（未通过）"}
-          </p>
-        )}
-        {!readyForUpload && !SKIP_HEALTH_CHECK && (
-          <p className="text-xs text-amber-600">
-            提交转写前请先完成一次链路检测。
-          </p>
-        )}
-        {SKIP_HEALTH_CHECK && (
-          <p className="text-xs text-muted-foreground">
-            已开启开发模式：可跳过链路检测直接提交。
-          </p>
-        )}
-      </div>
-
       <div className="space-y-8 rounded-3xl border border-border/60 bg-card/50 p-8 shadow-lg shadow-black/5">
         <form className="space-y-6" onSubmit={handleSubmit}>
-          <div className="space-y-2">
-            <Label htmlFor="audio-file" className="text-base font-medium">
-              选择音频
-            </Label>
-            <Input
-              ref={fileInputRef}
-              id="audio-file"
-              type="file"
-              accept="audio/*,video/*"
-              disabled={isUploading}
-            />
-            <p className="text-sm text-muted-foreground">
+          <input
+            ref={fileInputRef}
+            id="audio-file"
+            type="file"
+            accept="audio/*,video/*"
+            className="hidden"
+            onChange={handleFileInputChange}
+          />
+
+          <div
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleDropZoneClick();
+              }
+            }}
+            onClick={handleDropZoneClick}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={cn(
+              "rounded-3xl border-2 border-dashed bg-gradient-to-br from-primary/5 via-white to-indigo-50 p-8 text-center shadow-sm transition-all duration-200 hover:border-primary hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+              isDragActive &&
+                "border-primary bg-primary/10 shadow-lg dark:bg-primary/20",
+              isUploading && "pointer-events-none opacity-60"
+            )}
+          >
+            <div className="inline-flex items-center rounded-full bg-white/90 px-4 py-1 text-xs font-semibold text-primary shadow-sm dark:bg-slate-900/60">
+              选择音频文件
+            </div>
+            <p className="mt-4 text-2xl font-semibold text-slate-900 dark:text-white">
+              拖拽或点击上传音频
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
               支持 mp3、m4a、wav、mp4 等常见音视频格式（50MB 以内）。
             </p>
+            <p className="mt-4 text-xs font-medium text-primary">
+              {selectedFile
+                ? `已选择文件：${selectedFile.name}`
+                : "尚未选择文件"}
+            </p>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+              <Button
+                type="button"
+                size="lg"
+                onClick={handleDropZoneClick}
+                disabled={isUploading}
+              >
+                浏览本地文件
+              </Button>
+              <button
+                type="button"
+                className="text-sm text-primary underline-offset-2 hover:underline"
+                onClick={enableLinkInput}
+                disabled={isUploading}
+              >
+                或粘贴音频链接
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="audio-url" className="text-base font-medium">
-              或输入 OSS 链接
-            </Label>
-            <Input
-              id="audio-url"
-              type="url"
-              placeholder="https://bucket.oss-cn-xxx.aliyuncs.com/example.mp3"
-              value={fileUrl}
-              onChange={(event) => setFileUrl(event.target.value)}
-              disabled={isUploading}
-            />
-            <p className="text-sm text-muted-foreground">
-              链接会下载音/视频并在后台自动提取音频后调用 APIMart Whisper。
-            </p>
+          {showLinkInput && (
+            <div className="space-y-2 rounded-2xl border border-border/70 bg-background/70 p-4">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="audio-url" className="text-base font-medium">
+                  输入音频链接
+                </Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={toggleLinkInput}
+                >
+                  收起
+                </Button>
+              </div>
+              <Input
+                id="audio-url"
+                type="url"
+                placeholder="https://example.com/audio.mp3"
+                value={fileUrl}
+                onChange={(event) => handleFileUrlChange(event.target.value)}
+                disabled={isUploading}
+              />
+              <p className="text-xs text-muted-foreground">
+                自动下载链接中的音/视频并在后台提取音频，随后进入逐字稿生成流程。
+              </p>
+              <p className="text-xs text-muted-foreground">
+                填写链接会自动覆盖已选择的本地文件，主要用于测试。
+              </p>
+            </div>
+          )}
+
+          <div className="grid gap-3 text-sm sm:grid-cols-3">
+            <button
+              type="button"
+              onClick={toggleLinkInput}
+              className={cn(
+                "text-left rounded-2xl border border-dashed border-border/70 bg-white/70 p-4 shadow-sm transition hover:border-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+                showLinkInput && "border-primary bg-primary/5"
+              )}
+              aria-pressed={showLinkInput}
+            >
+              <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+                步骤 1
+              </p>
+              <p className="mt-1 text-sm font-semibold text-foreground">
+                上传或粘贴链接
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                单个文件 50MB 内，支持音视频混合格式。点击展开填入链接。
+              </p>
+            </button>
+            <div className="rounded-2xl border border-dashed border-border/70 bg-white/70 p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+                步骤 2
+              </p>
+              <p className="mt-1 text-sm font-semibold text-foreground">
+                进入转写流程
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                后台自动执行语音识别，生成逐字稿。
+              </p>
+            </div>
+            <div className="rounded-2xl border border-dashed border-border/70 bg-white/70 p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+                步骤 3
+              </p>
+              <p className="mt-1 text-sm font-semibold text-foreground">
+                获取逐字稿
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                输出文本可复制、导出 Word 或直接粘贴到知识库。
+              </p>
+            </div>
           </div>
 
           {error && <p className="text-sm text-red-500">{error}</p>}
 
           <div className="flex flex-wrap gap-3">
-            <Button type="submit" disabled={isUploading || !readyForUpload}>
+            <Button type="submit" disabled={isUploading}>
               {isUploading ? "执行中..." : "开始转写"}
             </Button>
             {showReset && (
@@ -381,85 +394,37 @@ export function TranscriptionUploader() {
               </Button>
             )}
           </div>
-          {!readyForUpload && !SKIP_HEALTH_CHECK && (
-            <p className="text-xs text-muted-foreground">
-              * 链路检测通过后按钮才会启用。
-            </p>
-          )}
         </form>
-
-        <div className="space-y-3 rounded-2xl bg-muted/40 p-4">
-          <div className="flex items-center justify-between text-sm font-medium">
-            <span>任务进度</span>
-            {stage !== "idle" && (
-              <span className="text-xs text-muted-foreground">
-                已用时 {(elapsedMs / 1000).toFixed(1)} 秒
-              </span>
-            )}
-          </div>
-          <ol className="flex flex-col gap-3">
-            {timeline.map((step) => (
-              <li
-                key={step.key}
-                className="flex items-start gap-3 rounded-xl border border-dashed border-slate-200/60 p-3 text-sm"
-              >
-                <span
-                  className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold",
-                    step.state === "done" && "bg-green-500/80 text-white",
-                    step.state === "active" && "bg-primary/80 text-primary-foreground",
-                    step.state === "error" && "bg-rose-500/80 text-white",
-                    step.state === "pending" && "bg-muted text-muted-foreground"
-                  )}
-                >
-                  {step.state === "done"
-                    ? "✓"
-                    : step.state === "error"
-                    ? "!"
-                    : step.state === "active"
-                    ? "•"
-                    : "…"}
-                </span>
-                <div>
-                  <p className="font-medium text-foreground">{step.title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {step.description}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
 
         {status === "done" && (
           <div className="space-y-4 rounded-2xl border border-border/80 bg-background/70 p-4">
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">音频地址</p>
-              <a
-                className="break-all text-sm text-primary underline underline-offset-2"
-                href={audioUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {audioUrl}
-              </a>
-              <p className="text-xs text-muted-foreground">
-                OSS Key: {objectKey}
-              </p>
-            </div>
-
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <Label className="text-base font-medium">逐字稿</Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleCopy}
-                >
-                  复制内容
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCopy}
+                    disabled={!transcript}
+                  >
+                    复制内容
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleExportWord}
+                    disabled={!transcript || exportingDoc}
+                  >
+                    {exportingDoc ? "导出中..." : "导出 Word"}
+                  </Button>
+                </div>
               </div>
+              {exportError && (
+                <p className="text-xs text-red-500">{exportError}</p>
+              )}
               <Textarea value={transcript} readOnly rows={10} />
             </div>
           </div>
@@ -467,74 +432,4 @@ export function TranscriptionUploader() {
       </div>
     </div>
   );
-}
-
-function renderLinkStatus(
-  label: string,
-  status?: LinkStatus,
-  checking?: boolean
-) {
-  const state = status
-    ? status.ok
-      ? "ok"
-      : "error"
-    : checking
-    ? "loading"
-    : "idle";
-  const issueLabel = status?.issue ? ISSUE_LABELS[status.issue] : null;
-
-  return (
-    <div className="rounded-2xl border border-border/60 bg-background/80 p-3 text-sm shadow-sm">
-      <p className="font-semibold text-foreground">{label}</p>
-      <p
-        className={cn(
-          "text-xs",
-          state === "ok" && "text-green-600",
-          state === "error" && "text-rose-500",
-          state === "loading" && "text-primary",
-          state === "idle" && "text-muted-foreground"
-        )}
-      >
-        {state === "ok"
-          ? `已就绪${status?.latency ? ` · ${status.latency}ms` : ""}`
-          : state === "error"
-          ? `${issueLabel ? `${issueLabel} · ` : ""}${
-              status?.reason || "检测失败"
-            }`
-          : state === "loading"
-          ? "检测中..."
-          : "尚未检测"}
-      </p>
-    </div>
-  );
-}
-
-function getStepState(
-  stage: WorkflowStage,
-  key: WorkflowKey,
-  failure?: WorkflowKey | null
-) {
-  if (stage === "idle") return "pending";
-  if (stage === "uploading") {
-    return key === "oss" ? "active" : "pending";
-  }
-  if (stage === "transcribing") {
-    if (key === "oss") return "done";
-    if (key === "apimart") return "active";
-    return "pending";
-  }
-  if (stage === "done") {
-    return "done";
-  }
-  if (stage === "error-upload") {
-    if (key === "oss") return "error";
-    return "pending";
-  }
-  if (stage === "error-api") {
-    if (key === "oss") return "done";
-    if (key === "apimart") return "error";
-    return "pending";
-  }
-  if (failure === key) return "error";
-  return "pending";
 }
