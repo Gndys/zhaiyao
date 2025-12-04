@@ -1,4 +1,6 @@
 import { TrialPlayground, TrialFormCopy } from "@/components/trial/playground";
+import { TrialChatBot } from "@/components/trial/chat-bot";
+import { TrialContextProvider } from "@/components/trial/trial-context";
 
 const trialCopy = {
   zh: {
@@ -39,12 +41,35 @@ const trialCopy = {
       summaryHint: "输出包含 Markdown，可直接复制粘贴到知识库。",
       copyLabel: "复制内容",
       copiedLabel: "已复制",
+      exportLabel: "导出 PDF",
+      exportingLabel: "生成中...",
       warningTitle: "本地降级摘要",
       errors: {
         empty: "请先粘贴或上传逐字稿。",
         general: "生成摘要失败，请稍后再试。",
         fileSize: "文件不能超过 5MB。",
         upload: "无法读取该文件，请换一个文本文件重试。",
+      },
+      modelSelector: {
+        label: "选择模型",
+        description: "切换不同的 AI 供应商，用于生成会议摘要。",
+        hint: "当前模型 ID：{{model}}",
+      },
+      healthCheck: {
+        title: "AI 连通性检测",
+        description: "提交前可先确认服务器能否连接所选 AI 模型。",
+        actionLabel: "检测 AI 是否接通",
+        actionLoadingLabel: "检测中...",
+        successLabel: "AI 服务已接通",
+        failureLabel: "检测失败",
+      },
+      dropzone: {
+        title: "拖拽或点击上传文本文件",
+        description: "将逐字稿文件拖到此处，或点击选择 .txt/.md/.srt/.vtt/.json。",
+        actionLabel: "选择文本文件",
+        secondaryLabel: "或改为粘贴逐字稿",
+        selectedLabel: "已选择文件",
+        emptyLabel: "支持 .txt/.md/.srt/.vtt/.json 格式",
       },
     } satisfies TrialFormCopy,
   },
@@ -91,12 +116,37 @@ const trialCopy = {
         "Output is Markdown friendly and ready to paste into your workspace.",
       copyLabel: "Copy",
       copiedLabel: "Copied",
+      exportLabel: "Export PDF",
+      exportingLabel: "Preparing...",
       warningTitle: "Local fallback summary",
       errors: {
         empty: "Please paste or upload a transcript first.",
         general: "Failed to generate the summary. Please try again.",
         fileSize: "Files must be smaller than 5MB.",
         upload: "Unable to read that file. Please upload a plain text file.",
+      },
+      modelSelector: {
+        label: "Model provider",
+        description: "Pick which AI vendor/model to use for this summary.",
+        hint: "Active model ID: {{model}}",
+      },
+      healthCheck: {
+        title: "AI connectivity",
+        description:
+          "Run a quick handshake with the selected AI provider before submitting.",
+        actionLabel: "Run health check",
+        actionLoadingLabel: "Checking...",
+        successLabel: "AI service reachable",
+        failureLabel: "Health check failed",
+      },
+      dropzone: {
+        title: "Drag & drop your transcript file",
+        description:
+          "Drop the transcript here or click to pick a .txt/.md/.srt/.vtt/.json file.",
+        actionLabel: "Choose a text file",
+        secondaryLabel: "or paste the transcript below",
+        selectedLabel: "Selected file",
+        emptyLabel: "Supports .txt/.md/.srt/.vtt/.json formats",
       },
     } satisfies TrialFormCopy,
   },
@@ -168,9 +218,13 @@ export default async function TrialPage({
         ))}
       </div>
 
-      <div className="mt-10">
-        <TrialPlayground copy={copy.form} />
-      </div>
+      <TrialContextProvider>
+        <div className="mt-10">
+          <TrialPlayground copy={copy.form} />
+        </div>
+
+        <TrialChatBot />
+      </TrialContextProvider>
     </div>
   );
 }

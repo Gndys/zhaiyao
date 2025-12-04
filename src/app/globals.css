@@ -29,3 +29,72 @@ button {
 pre {
   @apply px-4;
 }
+
+@layer components {
+  .summary-content {
+    @apply space-y-5 text-base leading-relaxed text-slate-800 dark:text-slate-100;
+    font-feature-settings: "liga" on, "kern" on;
+  }
+
+  .summary-content h2,
+  .summary-content h3,
+  .summary-content h4 {
+    @apply mt-8 font-semibold tracking-tight text-slate-900 dark:text-white;
+  }
+
+  .summary-content h2 {
+    @apply text-2xl border-l-4 border-primary/60 pl-4;
+  }
+
+  .summary-content h3 {
+    @apply text-xl border-l-4 border-primary/40 pl-3;
+  }
+
+  .summary-content h4 {
+    @apply text-lg border-l-4 border-primary/30 pl-3;
+  }
+
+  .summary-content p,
+  .summary-content li {
+    @apply text-sm sm:text-base text-slate-700 dark:text-slate-200;
+  }
+
+  .summary-content strong {
+    @apply font-semibold text-slate-900 dark:text-white;
+  }
+
+  .summary-content ul,
+  .summary-content ol {
+    @apply space-y-2 pl-5;
+  }
+
+  .summary-content blockquote {
+    @apply my-4 border-l-4 border-primary/70 bg-primary/5 px-4 py-3 text-sm text-slate-800 dark:border-primary/50 dark:bg-primary/20 dark:text-white;
+  }
+
+  .summary-content code {
+    @apply rounded-md bg-slate-100 px-2 py-0.5 text-sm font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-100;
+  }
+
+  .summary-content table {
+    @apply w-full overflow-hidden rounded-xl border border-slate-200 text-sm dark:border-slate-800;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .summary-content table th {
+    @apply bg-slate-100 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-200;
+  }
+
+  .summary-content table td {
+    @apply px-3 py-2 text-slate-700 dark:text-slate-200;
+  }
+
+  .summary-content table tbody tr:nth-child(odd) td {
+    @apply bg-white/80 dark:bg-slate-900/40;
+  }
+
+  .summary-content table tbody tr:nth-child(even) td {
+    @apply bg-slate-50 dark:bg-slate-900/20;
+  }
+}

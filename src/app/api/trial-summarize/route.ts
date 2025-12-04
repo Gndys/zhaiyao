@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { MEETING_SUMMARY_PROMPT } from "@/lib/prompts";
-
-const APIMART_ENDPOINT = "https://api.apimart.ai/v1/chat/completions";
-const DEFAULT_MODEL =
-  process.env.APIMART_MODEL && process.env.APIMART_MODEL.trim().length > 0
-    ? process.env.APIMART_MODEL
-    : "gemini-3-pro-preview";
+import { getChatProviderLabel } from "@/config/chat-providers";
+import {
+  getChatProviderApiKey,
+  getChatProviderEndpoint,
+  getChatProviderModel,
+  resolveChatProvider,
+} from "@/lib/chat-providers";
 
 type SupportedLang = "zh" | "en";
 
@@ -34,7 +35,7 @@ const FALLBACK_COPY: Record<
 > = {
   zh: {
     warning:
-      "⚠️ 暂时无法连接 APIMart，以下为本地快速提炼，仅供预览，请稍后重试以生成正式版摘要。",
+      "⚠️ 暂时无法连接所选 AI 服务，以下为本地快速提炼，仅供预览，请稍后重试以生成正式版摘要。",
     introHeading: "## 第一部分：核心主题",
     introGuide:
       "该版本依据本地规则粗略提炼，涵盖录音中的主线与目标，最终结果可能与正式模型存在差异。",
@@ -61,7 +62,7 @@ const FALLBACK_COPY: Record<
   },
   en: {
     warning:
-      "⚠️ Unable to reach APIMart. Generated a lightweight local summary for preview. Please retry later for the full AI output.",
+      "⚠️ Unable to reach the selected AI provider. Generated a lightweight local summary for preview. Please retry later for the full AI output.",
     introHeading: "## Part 1: Core Theme",
     introGuide:
       "This snapshot is produced locally and only captures the major storyline and goal. The official AI model will provide richer reasoning once the network is available.",
@@ -235,11 +236,13 @@ function buildLocalSummary(transcript: string) {
 export async function POST(req: Request) {
   let transcript: string | undefined;
   let prompt: string | undefined;
+  let providerInput: unknown;
 
   try {
     const body = await req.json();
     transcript = body?.transcript;
     prompt = body?.prompt;
+    providerInput = body?.provider;
   } catch {
     return NextResponse.json(
       { error: "Invalid JSON payload." },
@@ -263,19 +266,23 @@ export async function POST(req: Request) {
     );
   }
 
-  const apiKey = process.env.APIMART_API_KEY;
+  const provider = resolveChatProvider(providerInput);
+  const providerLabel = getChatProviderLabel(provider);
+  const apiKey = getChatProviderApiKey(provider);
 
   if (!apiKey) {
     return NextResponse.json(
-      { error: "APIMART_API_KEY is not configured." },
+      { error: `${providerLabel} 的 API 密钥尚未配置，请先填写环境变量。` },
       { status: 500 }
     );
   }
 
   const language = detectLanguage(trimmedTranscript);
+  const model = getChatProviderModel(provider);
+  const endpoint = getChatProviderEndpoint(provider);
 
   try {
-    const response = await fetch(APIMART_ENDPOINT, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -283,7 +290,7 @@ export async function POST(req: Request) {
       },
       cache: "no-store",
       body: JSON.stringify({
-        model: DEFAULT_MODEL,
+        model,
         temperature: 0.4,
         messages: [
           {
@@ -298,15 +305,36 @@ export async function POST(req: Request) {
             content: trimmedTranscript,
           },
         ],
+        stream: false,
       }),
     });
 
-    const data = (await response.json()) as ChatCompletionChunk;
+    const raw = await response.text();
+    let data: ChatCompletionChunk | null = null;
+    try {
+      data = raw ? (JSON.parse(raw) as ChatCompletionChunk) : null;
+    } catch (parseError) {
+      console.error("[trial-summarize] Failed to parse provider response", {
+        provider,
+        message: (parseError as Error).message,
+        preview: raw.slice(0, 200),
+      });
+    }
 
     if (!response.ok) {
       const message =
-        data?.error?.message || `Upstream error (${response.status}).`;
+        data?.error?.message ||
+        `${providerLabel} error (${response.status}): ${raw.slice(0, 120)}`;
       return NextResponse.json({ error: message }, { status: response.status });
+    }
+
+    if (!data) {
+      return NextResponse.json(
+        {
+          error: `${providerLabel} 返回内容格式异常，请稍后再试或联系管理员查看响应日志。`,
+        },
+        { status: 502 }
+      );
     }
 
     const summary = extractMessageContent(data);
@@ -318,9 +346,9 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({ summary });
+    return NextResponse.json({ summary, provider, model });
   } catch (error) {
-    console.error("[trial-summarize]", error);
+    console.error("[trial-summarize]", { provider, error });
     const fallbackSummary = buildLocalSummary(trimmedTranscript);
     return NextResponse.json(
       {
