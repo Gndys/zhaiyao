@@ -80,7 +80,10 @@ export function TrialChatBot() {
   }, [messages, isOpen]);
 
   const sendMessage = async (content: string) => {
-    const nextMessages = [...messages, { id: `${Date.now()}-user`, role: "user", content }];
+    const nextMessages: Message[] = [
+      ...messages,
+      { id: `${Date.now()}-user`, role: "user", content },
+    ];
     setMessages(nextMessages);
     setDraft("");
     setIsSending(true);
