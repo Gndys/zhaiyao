@@ -1,6 +1,10 @@
 import { TrialPlayground, TrialFormCopy } from "@/components/trial/playground";
 import { TrialChatBot } from "@/components/trial/chat-bot";
 import { TrialContextProvider } from "@/components/trial/trial-context";
+import {
+  REQUIREMENT_EXTRACTION_PROMPT,
+  REQUIREMENT_EXTRACTION_PROMPT_EN,
+} from "@/lib/prompts";
 
 const trialCopy = {
   zh: {
@@ -11,15 +15,18 @@ const trialCopy = {
     highlights: [
       {
         title: "逐字稿上传",
-        description: "支持文本粘贴与 .txt、.md、字幕文件的直接上传。",
+        description:
+          "支持粘贴文本或 .txt/.md/字幕文件，自动截断、识别语言与角色。",
       },
       {
         title: "AI 重构逻辑",
-        description: "基于 Gemini 模型的定制提示词，自动提炼观点与故事。",
+        description:
+          "多模型联动 + 定制模板，提炼要点、行动项、风险与最佳话术。",
       },
       {
         title: "Markdown 输出",
-        description: "结果遵循“摘要→观点→拆解→卡片→元分析”的分层结构。",
+        description:
+          "生成分层 Markdown，含摘要/亮点/行动项/引用，可复制、导出或分享。",
       },
     ],
     form: {
@@ -32,6 +39,38 @@ const trialCopy = {
       promptPlaceholder:
         "输入您自己的提示词，不填则自动使用内置提示词。",
       promptHint: "留空表示使用系统默认提示词。",
+      promptPresetsTitle: "常用场景模板",
+      promptPresetsDescription:
+        "选择一个场景自动填充提示词，右侧可查看场景说明。",
+      promptPresetsEmptyState:
+        "选择一个场景即可查看简介，提示词将自动填入输入框。",
+      promptPresets: [
+        {
+          id: "requirement-extraction",
+          label: "需求提炼",
+          description: "一键提炼客户痛点、需求优先级与实施方案。",
+          prompt: REQUIREMENT_EXTRACTION_PROMPT,
+        },
+        {
+          id: "business-meeting",
+          label: "商务会议",
+          description: "快速提炼商务会议重点、任务与各方立场，生成专业摘要。",
+          prompt: `你是一位顶尖的会议摘要与商务沟通专家，而我是个完全不懂如何提取会议重点的人。我刚刚参加了一个重要的商务会议，有详细的逐字稿，但我完全不知道如何从中提取关键信息，而我的老板期待我明天提交一份专业的会议摘要。
+
+我需要你帮我从这份冗长的逐字稿中提取出：
+1. 会议中讨论的所有需要备忘的事项（特别是有明确时间节点的任务）
+2. 会议的核心重点（最多3-5个关键点）
+3. 各方表达的主要观点和立场
+4. 任何需要跟进的决策或行动项目
+
+请以一种结构清晰、一目了然的格式呈现，让我看起来像是一位高效的商务专业人士。我的老板特别重视简洁和重点突出，所以摘要必须既全面又精炼。
+
+如果有些内容模糊不清，请标注出来并提供建议，告诉我如何在后续沟通中澄清这些问题。我完全依赖你的专业知识，因为我自己根本无法从这么多内容中找出重点。
+
+以下是会议逐字稿：
+[在这里粘贴您的会议逐字稿]`,
+        },
+      ],
       uploadLabel: "或上传文本文件",
       uploadHint: "最大 20,000 字符 / 5MB",
       submitLabel: "生成 AI 摘要",
@@ -81,17 +120,18 @@ const trialCopy = {
     highlights: [
       {
         title: "Transcript ingestion",
-        description: "Paste raw text or upload .txt/.md subtitle files instantly.",
+        description:
+          "Paste text or upload .txt/.md/subtitle files with auto-chunking, language and speaker detection.",
       },
       {
         title: "AI restructuring",
         description:
-          "A custom Gemini prompt rewrites the meeting by themes, quotes and tasks.",
+          "Multi-model prompts rewrite the meeting into themes, action items, risks and reusable talking points.",
       },
       {
         title: "Markdown ready",
         description:
-          "Output follows the summary → key ideas → deep dive → cards → meta format.",
+          "Layered Markdown with summary/highlights/actions/quotes, ready to copy, export or share.",
       },
     ],
     form: {
@@ -105,6 +145,38 @@ const trialCopy = {
       promptPlaceholder:
         "Type your own instructions. Leave empty to use the built-in prompt.",
       promptHint: "If left blank we fall back to the internal default prompt.",
+      promptPresetsTitle: "Templates",
+      promptPresetsDescription:
+        "Pick a scenario to auto-fill the prompt and see its description on the right.",
+      promptPresetsEmptyState:
+        "Pick a template to preview its description; the prompt auto-fills below.",
+      promptPresets: [
+        {
+          id: "requirement-extraction",
+          label: "Requirement Brief",
+          description:
+            "Extract client asks and turn them into implementation plans.",
+          prompt: REQUIREMENT_EXTRACTION_PROMPT_EN,
+        },
+        {
+          id: "business-meeting",
+          label: "Business Meeting",
+          description:
+            "Pull out meeting essentials, timed tasks, stances, and follow-ups.",
+          prompt: `You are a top-tier meeting summarization and business communication expert. I just attended an important business meeting and have a full transcript, but I don't know how to extract key information. My boss expects a concise professional summary by tomorrow.
+
+Please extract:
+1) All items to remember, especially tasks with deadlines.
+2) The 3-5 core takeaways.
+3) Each party's main viewpoints/positions.
+4) Any decisions or action items that need follow-up.
+
+Present it in a clear, skimmable format—concise yet complete. If anything is unclear, flag it and suggest what to clarify next time.
+
+Transcript:
+[paste the transcript here]`,
+        },
+      ],
       uploadLabel: "Or upload a text file",
       uploadHint: "Max 20,000 characters / 5MB",
       submitLabel: "Generate summary",

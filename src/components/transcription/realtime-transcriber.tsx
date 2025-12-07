@@ -74,11 +74,22 @@ export function RealtimeTranscriber() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const hostname = window.location.hostname;
+    const isLocalhost =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "[::1]";
+    if (!window.isSecureContext && !isLocalhost) {
+      setIsSupported(false);
+      setError("实时转写需要在 HTTPS 或 localhost 环境下使用，请切换到安全连接。");
+      return;
+    }
     const SpeechRecognitionClass =
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognitionClass) {
       setIsSupported(false);
+      setError("当前浏览器不支持 Web Speech API，建议使用最新版 Chrome 或 Edge。");
       return;
     }
 
@@ -141,7 +152,7 @@ export function RealtimeTranscriber() {
     }
   }, [language]);
 
-  const startListening = () => {
+  const startListening = async () => {
     if (!recognitionRef.current) {
       setError("当前浏览器不支持实时语音转写。");
       return;
@@ -149,6 +160,15 @@ export function RealtimeTranscriber() {
     if (isListening) return;
     setError(null);
     try {
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.mediaDevices?.getUserMedia
+      ) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        stream.getTracks().forEach((track) => track.stop());
+      }
       recognitionRef.current.start();
       setIsListening(true);
     } catch (err) {

@@ -223,37 +223,37 @@
   "feature": {
     "name": "feature",
     "title": "核心能力",
-    "description": "围绕“音频转写 + AI 总结 + 行动项”打造的全链路平台。",
+    "description": "围绕转写→摘要→行动项的核心能力，帮你更快复盘会议。",
     "items": [
       {
         "title": "逐字稿引擎",
-        "description": "基于自研声学模型与 OpenAI Whisper，支持 30+ 语言及口音。",
+        "description": "粘贴文本或上传音频/字幕，Whisper + 自研声学模型识别 30+ 语言。",
         "icon": "RiMic2Line"
       },
       {
         "title": "智能角色识别",
-        "description": "区分发言人、识别关键词与情绪，让对话结构更清晰。",
+        "description": "区分发言人、梳理段落，让逐字稿结构更清晰。",
         "icon": "RiTeamLine"
       },
       {
         "title": "多模板总结",
-        "description": "销售回顾、项目周会、投后沟通等 10+ 模板可选，摘要更贴合场景。",
+        "description": "售前回顾、需求澄清、项目周会等模板可选，摘要更贴合场景。",
         "icon": "RiDraftLine"
       },
       {
         "title": "行动项派发",
-        "description": "结合负责人与时间节点，自动同步到任务系统。",
+        "description": "提炼责任人和时间节点，生成可复制的行动清单。",
         "icon": "RiShareForwardLine"
       },
       {
-        "title": "知识库同步",
-        "description": "与 Confluence、Notion、飞书文档互通，形成结构化沉淀。",
-        "icon": "RiBookletLine"
+        "title": "模型与提示词",
+        "description": "可切换 DeepSeek/Gemini 模型，支持自定义提示词微调输出。",
+        "icon": "RiSparklingLine"
       },
       {
-        "title": "权限与审计",
-        "description": "细粒度访问控制、下载水印与操作日志，满足企业合规。",
-        "icon": "RiLockPasswordLine"
+        "title": "导出与分享",
+        "description": "一键复制 Markdown 或导出 PDF，方便粘贴到你的文档与协作工具。",
+        "icon": "RiFileCopyLine"
       }
     ]
   },
@@ -382,7 +382,7 @@
         "icon": "GoArrowUpRight"
       },
       {
-        "title": "下载产品手册",
+        "title": "查看产品手册",
         "url": "/zh/docs",
         "target": "_self",
         "variant": "outline"

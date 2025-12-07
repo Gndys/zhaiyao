@@ -12,6 +12,7 @@ import {
   NavigationMenuContent,
   NavigationMenuItem,
   NavigationMenuList,
+  NavigationMenuLink,
   NavigationMenuTrigger,
   navigationMenuTriggerStyle,
 } from "@/components/ui/navigation-menu";
@@ -82,28 +83,30 @@ export default function Header({ header }: { header: HeaderType }) {
                             <ul className="w-80 p-3">
                               {item.children.map((iitem, ii) => (
                                 <li key={ii}>
-                                  <Link
-                                    className={cn(
-                                      "flex select-none gap-4 rounded-md p-3 leading-none no-underline outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
-                                    )}
-                                    href={iitem.url as any}
-                                    target={iitem.target}
-                                  >
-                                    {iitem.icon && (
-                                      <Icon
-                                        name={iitem.icon}
-                                        className="size-5 shrink-0"
-                                      />
-                                    )}
-                                    <div>
-                                      <div className="text-sm font-semibold">
-                                        {iitem.title}
+                                  <NavigationMenuLink asChild>
+                                    <Link
+                                      className={cn(
+                                        "flex select-none gap-4 rounded-md p-3 leading-none no-underline outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                                      )}
+                                      href={iitem.url as any}
+                                      target={iitem.target}
+                                    >
+                                      {iitem.icon && (
+                                        <Icon
+                                          name={iitem.icon}
+                                          className="size-5 shrink-0"
+                                        />
+                                      )}
+                                      <div>
+                                        <div className="text-sm font-semibold">
+                                          {iitem.title}
+                                        </div>
+                                        <p className="text-sm leading-snug text-muted-foreground">
+                                          {iitem.description}
+                                        </p>
                                       </div>
-                                      <p className="text-sm leading-snug text-muted-foreground">
-                                        {iitem.description}
-                                      </p>
-                                    </div>
-                                  </Link>
+                                    </Link>
+                                  </NavigationMenuLink>
                                 </li>
                               ))}
                             </ul>
@@ -114,25 +117,27 @@ export default function Header({ header }: { header: HeaderType }) {
 
                     return (
                       <NavigationMenuItem key={i}>
-                        <Link
-                          className={cn(
-                            "text-muted-foreground",
-                            navigationMenuTriggerStyle,
-                            buttonVariants({
-                              variant: "ghost",
-                            })
-                          )}
-                          href={item.url as any}
-                          target={item.target}
-                        >
-                          {item.icon && (
-                            <Icon
-                              name={item.icon}
-                              className="size-4 shrink-0 mr-0"
-                            />
-                          )}
-                          {item.title}
-                        </Link>
+                        <NavigationMenuLink asChild>
+                          <Link
+                            className={cn(
+                              "text-muted-foreground",
+                              navigationMenuTriggerStyle,
+                              buttonVariants({
+                                variant: "ghost",
+                              })
+                            )}
+                            href={item.url as any}
+                            target={item.target}
+                          >
+                            {item.icon && (
+                              <Icon
+                                name={item.icon}
+                                className="size-4 shrink-0 mr-0"
+                              />
+                            )}
+                            {item.title}
+                          </Link>
+                        </NavigationMenuLink>
                       </NavigationMenuItem>
                     );
                   })}

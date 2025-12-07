@@ -55,6 +55,15 @@ export type TrialFormCopy = {
   promptLabel: string;
   promptPlaceholder: string;
   promptHint: string;
+  promptPresetsTitle?: string;
+  promptPresetsDescription?: string;
+  promptPresetsEmptyState?: string;
+  promptPresets?: {
+    id: string;
+    label: string;
+    description?: string;
+    prompt: string;
+  }[];
   uploadLabel: string;
   uploadHint: string;
   submitLabel: string;
@@ -104,6 +113,7 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
   const { provider, setProvider, transcript, setTranscript } =
     useTrialContext();
   const [customPrompt, setCustomPrompt] = useState("");
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [summary, setSummary] = useState("");
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -127,6 +137,13 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
     CHAT_PROVIDER_OPTIONS[0];
   const providerLabel = providerMeta.label;
   const providerModelHint = providerMeta.modelHint;
+  const activePreset = useMemo(
+    () =>
+      copy.promptPresets?.find(
+        (preset) => preset.id === selectedPresetId
+      ),
+    [copy.promptPresets, selectedPresetId]
+  );
 
   if (!mdRef.current) {
     mdRef.current = new MarkdownIt({ linkify: true, breaks: true });
@@ -200,6 +217,23 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
       event.preventDefault();
       handleDropZoneClick();
     }
+  };
+
+  const handlePromptInput = (value: string) => {
+    setCustomPrompt(value);
+    if (selectedPresetId) {
+      const preset = copy.promptPresets?.find(
+        (item) => item.id === selectedPresetId
+      );
+      if (!preset || preset.prompt !== value) {
+        setSelectedPresetId(null);
+      }
+    }
+  };
+
+  const handlePresetApply = (presetId: string, prompt: string) => {
+    setCustomPrompt(prompt);
+    setSelectedPresetId(presetId);
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -515,12 +549,65 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
                 <AccordionTrigger className="px-4 text-left text-base font-semibold hover:no-underline">
                   {copy.promptLabel}
                 </AccordionTrigger>
-                <AccordionContent className="space-y-2 border-t border-border/60 px-4 pb-4 pt-4">
+                <AccordionContent className="space-y-3 border-t border-border/60 px-4 pb-4 pt-4">
+                  {copy.promptPresets?.length ? (
+                    <div className="space-y-3 rounded-xl border border-dashed border-primary/40 bg-primary/5 p-4">
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+                          {copy.promptPresetsTitle || "Presets"}
+                        </p>
+                        {copy.promptPresetsDescription ? (
+                          <p className="text-xs text-primary/80">
+                            {copy.promptPresetsDescription}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-[minmax(0,240px)_1fr]">
+                        <div className="flex flex-wrap gap-2">
+                          {copy.promptPresets.map((preset) => {
+                            const isActive = preset.id === selectedPresetId;
+                            return (
+                              <Button
+                                key={preset.id}
+                                type="button"
+                                variant={isActive ? "default" : "outline"}
+                                size="sm"
+                                className={cn(
+                                  "rounded-full px-3 py-2 text-sm font-medium",
+                                  isActive && "shadow-sm"
+                                )}
+                                onClick={() =>
+                                  handlePresetApply(preset.id, preset.prompt)
+                                }
+                              >
+                                {preset.label}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                        <div className="rounded-lg border border-primary/20 bg-white/80 p-4 shadow-sm dark:border-primary/30 dark:bg-slate-900/60">
+                          {activePreset ? (
+                            <p className="text-sm text-slate-900 dark:text-white">
+                              {activePreset.label}
+                              {activePreset.description
+                                ? ` · ${activePreset.description}`
+                                : ""}
+                            </p>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">
+                              {copy.promptPresetsEmptyState ||
+                                copy.promptHint}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <Textarea
                     id="custom-prompt"
                     placeholder={copy.promptPlaceholder}
                     value={customPrompt}
-                    onChange={(event) => setCustomPrompt(event.target.value)}
+                    onChange={(event) => handlePromptInput(event.target.value)}
                     rows={4}
                   />
                   <p className="text-xs text-muted-foreground">
