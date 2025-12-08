@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -40,13 +40,9 @@ const AUDIO_SEGMENT_CONCURRENCY = Math.max(
   Number(process.env.AUDIO_SEGMENT_CONCURRENCY ?? 4)
 );
 
-const REQUIRED_ENV_VARS = [
-  "APIMART_API_KEY",
-  "OSS_REGION",
-  "OSS_BUCKET",
-  "OSS_ACCESS_KEY_ID",
-  "OSS_ACCESS_KEY_SECRET",
-];
+type TranscriptionVendor = "tencent" | "apimart";
+const TRANSCRIPTION_VENDOR = (process.env.TRANSCRIPTION_VENDOR ||
+  "tencent") as TranscriptionVendor;
 
 const APIMART_TRANSCRIPTION_ENDPOINT =
   process.env.APIMART_WHISPER_ENDPOINT?.replace(/\/$/, "") ||
@@ -57,6 +53,18 @@ const APIMART_TRANSCRIPTION_LANGUAGE =
   process.env.APIMART_WHISPER_LANGUAGE || "";
 const APIMART_TRANSCRIPTION_PROMPT =
   process.env.APIMART_WHISPER_PROMPT || "";
+
+const TENCENT_ASR_ENDPOINT = "asr.tencentcloudapi.com";
+const TENCENT_ASR_VERSION = "2019-06-14";
+const TENCENT_ASR_REGION = process.env.TENCENT_ASR_REGION || "ap-beijing";
+const TENCENT_ASR_ENGINE_MODEL =
+  process.env.TENCENT_ASR_ENGINE_MODEL || "16k_zh";
+const TENCENT_ASR_POLL_INTERVAL_MS = Number(
+  process.env.TENCENT_ASR_POLL_INTERVAL_MS || 3000
+);
+const TENCENT_ASR_POLL_TIMEOUT_MS = Number(
+  process.env.TENCENT_ASR_POLL_TIMEOUT_MS || 45000
+);
 
 export async function POST(req: Request) {
   let uploadResult: { url: string; key: string } | undefined;
@@ -89,7 +97,8 @@ export async function POST(req: Request) {
   };
 
   try {
-    validateEnv();
+    const vendor = getTranscriptionVendor();
+    validateEnv(vendor);
     user_uuid = await getUserUuid();
     const formData = await req.formData();
     const fileEntry = formData.get("file");
@@ -131,34 +140,43 @@ export async function POST(req: Request) {
       );
     }
 
-    if (file.size > MAX_FILE_SIZE) {
+    if (transcriptionFile.size > MAX_FILE_SIZE) {
       return NextResponse.json(
         { error: "文件体积超出限制，请压缩到 50MB 以内再试。" },
         { status: 400 }
       );
     }
 
+    transcriptionFile = await optimizeAudioForTranscription(transcriptionFile);
     safeFilename = transcriptionFile.name || safeFilename;
 
     console.log("[transcription] file validated", {
-      filename: file.name,
-      size: file.size,
-      type: file.type,
+      filename: transcriptionFile.name,
+      size: transcriptionFile.size,
+      type: transcriptionFile.type,
       source: fileSource,
       convertedFromVideo,
     });
 
     if (fileSource === "upload") {
-      uploadResult = await uploadToOSS(file);
+      uploadResult = await uploadToOSS(transcriptionFile);
       console.log("[transcription] uploaded to OSS", uploadResult);
     } else {
       uploadResult = buildUploadResultFromUrl(remoteUrl);
       console.log("[transcription] using remote OSS object", uploadResult);
     }
-    const optimizedFile = await optimizeAudioForTranscription(transcriptionFile);
-    const segmentedFiles = await segmentAudioFile(optimizedFile);
-    const transcription = await transcribeSegments(segmentedFiles);
-    console.log("[transcription] apimart response", {
+    let transcription:
+      | Awaited<ReturnType<typeof transcribeWithTencent>>
+      | Awaited<ReturnType<typeof transcribeSegmentsWithApimart>>;
+
+    if (vendor === "tencent") {
+      transcription = await transcribeWithTencent(uploadResult.url);
+    } else {
+      const segmentedFiles = await segmentAudioFile(transcriptionFile);
+      transcription = await transcribeSegmentsWithApimart(segmentedFiles);
+    }
+    console.log("[transcription] transcription response", {
+      vendor: transcription.vendor,
       hasTranscript: Boolean(transcription.transcript),
     });
 
@@ -189,6 +207,11 @@ function isHistoryEnabled() {
   return Boolean(process.env.DATABASE_URL);
 }
 
+function getTranscriptionVendor(): TranscriptionVendor {
+  const value = (TRANSCRIPTION_VENDOR || "tencent").toLowerCase();
+  return value === "apimart" ? "apimart" : "tencent";
+}
+
 export async function GET() {
   return NextResponse.json(
     { error: "转写接口为同步模式，无需查询任务状态。" },
@@ -196,8 +219,20 @@ export async function GET() {
   );
 }
 
-function validateEnv() {
-  const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
+function validateEnv(vendor: TranscriptionVendor) {
+  const baseVars = [
+    "OSS_REGION",
+    "OSS_BUCKET",
+    "OSS_ACCESS_KEY_ID",
+    "OSS_ACCESS_KEY_SECRET",
+  ];
+  const vendorVars =
+    vendor === "tencent"
+      ? ["TENCENT_SECRET_ID", "TENCENT_SECRET_KEY"]
+      : ["APIMART_API_KEY"];
+  const missing = [...baseVars, ...vendorVars].filter(
+    (key) => !process.env[key]
+  );
   if (missing.length) {
     throw new Error(`缺少必填环境变量：${missing.join(", ")}`);
   }
@@ -353,7 +388,7 @@ async function transcribeWithApimart(file: File) {
   };
 }
 
-async function transcribeSegments(files: File[]) {
+async function transcribeSegmentsWithApimart(files: File[]) {
   if (files.length === 0) {
     throw new Error("没有可用的音频片段。");
   }
@@ -407,6 +442,205 @@ async function transcribeSegments(files: File[]) {
     vendor: "apimart-whisper",
     raw: results.map((result) => result?.raw),
   };
+}
+
+async function transcribeWithTencent(url: string) {
+  const taskId = await createTencentRecTask(url);
+  const data = await pollTencentTaskResult(taskId);
+  const transcript = extractTencentTranscript(data);
+  if (!transcript) {
+    throw new Error("腾讯云语音识别未返回文本结果。");
+  }
+
+  return {
+    transcript: normalizeTranscriptText(transcript),
+    vendor: "tencent-asr",
+    raw: data,
+  };
+}
+
+async function createTencentRecTask(url: string) {
+  const payload = {
+    EngineModelType: TENCENT_ASR_ENGINE_MODEL,
+    ChannelNum: 1,
+    ResTextFormat: 0,
+    SourceType: 0,
+    Url: url,
+    // SubServiceType: 2, // 可通过环境变量扩展
+  };
+
+  const data = await tencentApiRequest("CreateRecTask", payload);
+  const taskId =
+    data?.Response?.Data?.TaskId ??
+    data?.Response?.TaskId ??
+    data?.TaskId ??
+    data?.Data?.TaskId;
+
+  if (taskId === undefined || taskId === null) {
+    throw new Error("腾讯云创建转写任务失败：未返回 TaskId。");
+  }
+  return taskId;
+}
+
+async function pollTencentTaskResult(taskId: number | string) {
+  const start = Date.now();
+  while (true) {
+    const data = await describeTencentTaskStatus(taskId);
+    const resp = data?.Response || data;
+    const status =
+      resp?.Data?.Status ??
+      resp?.Status ??
+      resp?.StatusStr ??
+      resp?.Data?.StatusStr;
+
+    if (status === 2 || status === "success") {
+      return data;
+    }
+    if (status === 3 || status === "failed" || status === "error") {
+      const message =
+        resp?.Data?.ErrorMsg ||
+        resp?.Error?.Message ||
+        resp?.ErrorMsg ||
+        "腾讯云转写任务失败。";
+      throw new Error(message);
+    }
+
+    if (Date.now() - start > TENCENT_ASR_POLL_TIMEOUT_MS) {
+      throw new Error("腾讯云转写超时，请稍后重试。");
+    }
+
+    await wait(TENCENT_ASR_POLL_INTERVAL_MS);
+  }
+}
+
+async function describeTencentTaskStatus(taskId: number | string) {
+  const payload = {
+    TaskId: Number(taskId),
+  };
+  return tencentApiRequest("DescribeTaskStatus", payload);
+}
+
+async function tencentApiRequest(
+  action: string,
+  payload: Record<string, any>
+) {
+  const secretId = process.env.TENCENT_SECRET_ID!;
+  const secretKey = process.env.TENCENT_SECRET_KEY!;
+  const sessionToken = process.env.TENCENT_SESSION_TOKEN;
+  const body = JSON.stringify(payload);
+  const { authorization, timestamp } = signTencentRequest(
+    action,
+    body,
+    secretId,
+    secretKey
+  );
+
+  const headers: Record<string, string> = {
+    Authorization: authorization,
+    "Content-Type": "application/json; charset=utf-8",
+    Host: TENCENT_ASR_ENDPOINT,
+    "X-TC-Action": action,
+    "X-TC-Version": TENCENT_ASR_VERSION,
+    "X-TC-Timestamp": String(timestamp),
+    "X-TC-Region": TENCENT_ASR_REGION,
+  };
+
+  if (sessionToken) {
+    headers["X-TC-Token"] = sessionToken;
+  }
+
+  const response = await fetch(`https://${TENCENT_ASR_ENDPOINT}`, {
+    method: "POST",
+    headers,
+    body,
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok || !data) {
+    throw new Error(
+      `腾讯云 ASR 请求失败：${response.status} ${response.statusText}`
+    );
+  }
+
+  const error =
+    data?.Response?.Error || data?.Error || data?.Response?.Data?.Error;
+  if (error) {
+    throw new Error(
+      typeof error?.Message === "string"
+        ? error.Message
+        : JSON.stringify(error)
+    );
+  }
+
+  return data;
+}
+
+function signTencentRequest(
+  action: string,
+  body: string,
+  secretId: string,
+  secretKey: string
+) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const date = new Date(timestamp * 1000).toISOString().slice(0, 10).replace(/-/g, "");
+  const canonicalRequest = [
+    "POST",
+    "/",
+    "",
+    `content-type:application/json; charset=utf-8\nhost:${TENCENT_ASR_ENDPOINT}\n`,
+    "content-type;host",
+    hashSha256(body),
+  ].join("\n");
+
+  const stringToSign = [
+    "TC3-HMAC-SHA256",
+    String(timestamp),
+    `${date}/asr/tc3_request`,
+    hashSha256(canonicalRequest),
+  ].join("\n");
+
+  const secretDate = hmacSha256(`TC3${secretKey}`, date, "buffer");
+  const secretService = hmacSha256(secretDate, "asr", "buffer");
+  const secretSigning = hmacSha256(secretService, "tc3_request", "buffer");
+  const signature = hmacSha256(secretSigning, stringToSign, "hex");
+
+  const authorization = [
+    "TC3-HMAC-SHA256 Credential=",
+    `${secretId}/${date}/asr/tc3_request`,
+    ", SignedHeaders=content-type;host, Signature=",
+    signature,
+  ].join("");
+
+  return { authorization, timestamp };
+}
+
+function hashSha256(payload: string) {
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+function hmacSha256(
+  key: string | Buffer,
+  payload: string,
+  encoding: "hex" | "buffer" = "hex"
+) {
+  const digest = createHmac("sha256", key).update(payload);
+  return encoding === "buffer" ? digest.digest() : digest.digest("hex");
+}
+
+function extractTencentTranscript(data: any) {
+  if (!data) return "";
+  const resp = data.Response || data;
+  const result =
+    resp?.Data?.Result ||
+    resp?.Result ||
+    resp?.Data?.ResultText ||
+    resp?.ResultText;
+  return typeof result === "string" ? result : "";
+}
+
+function wait(durationMs: number) {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
 
 type ApimartSegment = {
