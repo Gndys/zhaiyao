@@ -10,6 +10,9 @@ import {
 
 type SupportedLang = "zh" | "en";
 
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
 const FALLBACK_COPY: Record<
   SupportedLang,
   {
@@ -101,6 +104,12 @@ type ChatCompletionChunk = {
   error?: { message?: string };
 };
 
+type StreamStatusPhase =
+  | "starting"
+  | "streaming"
+  | "done"
+  | "error";
+
 function extractMessageContent(data: ChatCompletionChunk): string {
   const message = data.choices?.[0]?.message;
   if (!message?.content) return "";
@@ -122,6 +131,8 @@ function extractMessageContent(data: ChatCompletionChunk): string {
 function detectLanguage(transcript: string): SupportedLang {
   return /[\u4e00-\u9fa5]/.test(transcript) ? "zh" : ("en" as SupportedLang);
 }
+
+const TRANSCRIPT_LIMIT_CHARS = 60_000;
 
 function splitSentences(transcript: string, lang: SupportedLang) {
   const normalized = transcript.replace(/\r/g, "\n");
@@ -159,6 +170,441 @@ function chunkArray<T>(items: T[], size: number) {
     chunks.push(items.slice(i, i + size));
   }
   return chunks;
+}
+
+const MAX_TRANSCRIPT_CHARS = 10_000;
+const CHUNK_TARGET_CHARS = 3_500;
+const MAX_CHUNKS = 16;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 240_000;
+const DEFAULT_MAX_TOKENS = 1_200;
+const DEFAULT_CHUNK_CONCURRENCY = 2;
+
+function resolveChunkConcurrency() {
+  const raw = process.env.TRIAL_SUMMARIZE_CHUNK_CONCURRENCY?.trim();
+  if (!raw) return DEFAULT_CHUNK_CONCURRENCY;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_CHUNK_CONCURRENCY;
+  return Math.max(1, Math.min(6, Math.floor(parsed)));
+}
+
+function resolveUpstreamTimeoutMs() {
+  const raw = process.env.TRIAL_SUMMARIZE_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_UPSTREAM_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_UPSTREAM_TIMEOUT_MS;
+  return Math.max(5_000, Math.min(300_000, Math.floor(parsed)));
+}
+
+function buildCondensedTranscript(transcript: string) {
+  const lang = detectLanguage(transcript);
+  const sentences = splitSentences(transcript, lang);
+  if (!sentences.length) {
+    return transcript.slice(0, MAX_TRANSCRIPT_CHARS);
+  }
+
+  const joiner = lang === "zh" ? "" : " ";
+  const selected: string[] = [];
+  let size = 0;
+
+  for (const sentence of sentences) {
+    const piece = sentence.trim();
+    if (!piece) continue;
+    const nextSize = size + piece.length + (selected.length ? joiner.length : 0);
+    if (nextSize > MAX_TRANSCRIPT_CHARS) break;
+    selected.push(piece);
+    size = nextSize;
+    if (selected.length >= 120) break;
+  }
+
+  return selected.length ? selected.join(joiner) : transcript.slice(0, MAX_TRANSCRIPT_CHARS);
+}
+
+function splitTranscriptIntoChunks(transcript: string) {
+  const lang = detectLanguage(transcript);
+  const sentences = splitSentences(transcript, lang);
+  const joiner = lang === "zh" ? "" : " ";
+
+  if (!sentences.length) {
+    return [transcript.slice(0, CHUNK_TARGET_CHARS)];
+  }
+
+  const chunks: string[] = [];
+  let current: string[] = [];
+  let size = 0;
+
+  for (const sentence of sentences) {
+    const piece = sentence.trim();
+    if (!piece) continue;
+
+    const nextSize =
+      size + piece.length + (current.length ? joiner.length : 0);
+
+    if (nextSize > CHUNK_TARGET_CHARS && current.length) {
+      chunks.push(current.join(joiner));
+      if (chunks.length >= MAX_CHUNKS) return chunks;
+      current = [piece];
+      size = piece.length;
+      continue;
+    }
+
+    current.push(piece);
+    size = nextSize;
+  }
+
+  if (current.length && chunks.length < MAX_CHUNKS) {
+    chunks.push(current.join(joiner));
+  }
+
+  return chunks;
+}
+
+function buildChunkPrompt({
+  globalPrompt,
+  language,
+}: {
+  globalPrompt: string;
+  language: SupportedLang;
+}) {
+  const header =
+    language === "zh"
+      ? "你是一位会议纪要/需求提炼专家。请严格遵守【全局要求】。"
+      : "You are a meeting-notes expert. Follow the GLOBAL REQUIREMENTS strictly.";
+
+  const task =
+    language === "zh"
+      ? "你将收到会议逐字稿的一个分段。请仅总结这一段：提炼要点、决策、待办、风险/疑问，并保留关键数字与人名（如有）。输出 Markdown，尽量简洁，避免编造。"
+      : "You will receive ONE chunk of a meeting transcript. Summarize ONLY this chunk: key points, decisions, action items, risks/questions, preserving numbers/names. Output Markdown, concise, and do not fabricate.";
+
+  return `${header}\n\n【全局要求】\n${globalPrompt}\n\n【分段任务】\n${task}`.trim();
+}
+
+function buildMergePrompt({
+  globalPrompt,
+  language,
+}: {
+  globalPrompt: string;
+  language: SupportedLang;
+}) {
+  const header =
+    language === "zh"
+      ? "你将收到多段“分段摘要”。请严格遵守【全局要求】，将它们合并为一份完整会议纪要。"
+      : "You will receive multiple partial summaries. Follow the GLOBAL REQUIREMENTS strictly and merge them into one final report.";
+
+  const requirements =
+    language === "zh"
+      ? "输出必须包含：核心主题、一句话总结、关键洞察、决策结论、行动项（Owner/DDL 如缺失请标注待补）、风险与未决问题。输出 Markdown，结构清晰，可直接复制。"
+      : "Must include: core theme, one-line summary, key insights, decisions, action items (mark missing owner/deadline as TBD), risks and open questions. Output well-structured Markdown.";
+
+  return `${header}\n\nGLOBAL REQUIREMENTS:\n${globalPrompt}\n\nMERGE TASK:\n${requirements}`.trim();
+}
+
+function buildPreviewPrompt({
+  globalPrompt,
+  language,
+}: {
+  globalPrompt: string;
+  language: SupportedLang;
+}) {
+  const header =
+    language === "zh"
+      ? "你是一位会议纪要专家。请严格遵守【全局要求】。"
+      : "You are a meeting-notes expert. Follow the GLOBAL REQUIREMENTS strictly.";
+
+  const task =
+    language === "zh"
+      ? [
+          "现在你只需要先生成“预览版”，用于让用户快速看到核心结论与行动项。",
+          "仅输出两部分，必须使用以下固定标题：",
+          "## 关键结论（预览）",
+          "- 3~6 条要点，尽量具体，保留关键数字/人名（如有），避免编造",
+          "## 行动项（预览）",
+          "- 用 Markdown 表格输出：| 事项 | Owner | DDL | 备注 |（缺失信息用 TBD）",
+          "不要输出其他任何内容。",
+        ].join("\n")
+      : [
+          "Generate a QUICK PREVIEW only so users can see key takeaways and action items first.",
+          "Output ONLY two sections with these exact headings:",
+          "## Key Takeaways (Preview)",
+          "- 3-6 bullets, keep numbers/names if present, do not fabricate",
+          "## Action Items (Preview)",
+          "- Markdown table: | Item | Owner | Due | Notes | (use TBD for missing)",
+          "Do not output anything else.",
+        ].join("\n");
+
+  return `${header}\n\n【全局要求】\n${globalPrompt}\n\n【预览任务】\n${task}`.trim();
+}
+
+function splitPreviewSections(text: string, language: SupportedLang) {
+  const raw = text.trim();
+  if (!raw) return { keyTakeaways: "", actionItems: "" };
+
+  const keyHeading =
+    language === "zh"
+      ? "## 关键结论（预览）"
+      : "## Key Takeaways (Preview)";
+  const actionHeading =
+    language === "zh" ? "## 行动项（预览）" : "## Action Items (Preview)";
+
+  const normalize = (value: string) => value.replace(/\r/g, "").trim();
+  const normalized = normalize(raw);
+
+  const keyIndex = normalized.indexOf(keyHeading);
+  const actionIndex = normalized.indexOf(actionHeading);
+
+  if (keyIndex === -1 && actionIndex === -1) {
+    return { keyTakeaways: normalized, actionItems: "" };
+  }
+
+  if (keyIndex !== -1 && actionIndex !== -1) {
+    const keyBlock = normalize(
+      normalized.slice(keyIndex + keyHeading.length, actionIndex)
+    );
+    const actionBlock = normalize(
+      normalized.slice(actionIndex + actionHeading.length)
+    );
+    return { keyTakeaways: keyBlock, actionItems: actionBlock };
+  }
+
+  if (keyIndex !== -1) {
+    return {
+      keyTakeaways: normalize(normalized.slice(keyIndex + keyHeading.length)),
+      actionItems: "",
+    };
+  }
+
+  return {
+    keyTakeaways: "",
+    actionItems: normalize(normalized.slice(actionIndex + actionHeading.length)),
+  };
+}
+
+function isRetriableError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("aborted") ||
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("429") ||
+    message.includes("rate") ||
+    message.includes("503") ||
+    message.includes("overloaded")
+  );
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callChatCompletion({
+  endpoint,
+  apiKey,
+  model,
+  prompt,
+  userContent,
+  timeoutMs,
+  signal,
+}: {
+  endpoint: string;
+  apiKey: string;
+  model: string;
+  prompt: string;
+  userContent: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}) {
+  const maxAttempts = 3;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const abortListener = () => controller.abort();
+    signal?.addEventListener("abort", abortListener, { once: true });
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        cache: "no-store",
+        signal: controller.signal,
+        body: JSON.stringify({
+          model,
+          temperature: 0.4,
+          max_tokens: DEFAULT_MAX_TOKENS,
+          messages: [
+            { role: "system", content: prompt },
+            { role: "user", content: userContent },
+          ],
+          stream: false,
+        }),
+      });
+
+      const raw = await response.text();
+      let data: ChatCompletionChunk | null = null;
+      try {
+        data = raw ? (JSON.parse(raw) as ChatCompletionChunk) : null;
+      } catch (parseError) {
+        console.error("[trial-summarize] Failed to parse provider response", {
+          message: (parseError as Error).message,
+          preview: raw.slice(0, 200),
+        });
+      }
+
+      if (!response.ok) {
+        const message =
+          data?.error?.message ||
+          `Upstream error (${response.status}): ${raw.slice(0, 120)}`;
+        const error = new Error(message);
+        (error as any).status = response.status;
+        throw error;
+      }
+
+      if (!data) {
+        throw new Error("Upstream returned unparseable content.");
+      }
+
+      const content = extractMessageContent(data);
+      if (!content) {
+        throw new Error("No content returned from the AI model.");
+      }
+
+      return content;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isRetriableError(error)) {
+        throw error;
+      }
+      await sleep(400 * attempt * attempt);
+    } finally {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", abortListener);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Upstream error.");
+}
+
+type ChatCompletionStreamChunk = {
+  choices?: Array<{
+    delta?: {
+      content?: string;
+      reasoning_content?: string;
+    };
+  }>;
+  error?: { message?: string };
+};
+
+async function streamChatCompletion({
+  endpoint,
+  apiKey,
+  model,
+  prompt,
+  userContent,
+  timeoutMs,
+  signal,
+  onDelta,
+}: {
+  endpoint: string;
+  apiKey: string;
+  model: string;
+  prompt: string;
+  userContent: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  onDelta: (text: string) => void;
+}) {
+  const controller = new AbortController();
+  const abortListener = () => controller.abort();
+  signal?.addEventListener("abort", abortListener, { once: true });
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const resetTimeout = () => {
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  };
+  resetTimeout();
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      cache: "no-store",
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        temperature: 0.4,
+        messages: [
+          { role: "system", content: prompt },
+          { role: "user", content: userContent },
+        ],
+        stream: true,
+      }),
+    });
+
+    if (!response.ok) {
+      const raw = await response.text();
+      let data: ChatCompletionStreamChunk | null = null;
+      try {
+        data = raw ? (JSON.parse(raw) as ChatCompletionStreamChunk) : null;
+      } catch {
+        data = null;
+      }
+      const message =
+        data?.error?.message ||
+        `Upstream error (${response.status}): ${raw.slice(0, 120)}`;
+      const error = new Error(message);
+      (error as any).status = response.status;
+      throw error;
+    }
+
+    if (!response.body) {
+      throw new Error("Upstream did not return a stream body.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      if (signal?.aborted) break;
+      const { value, done } = await reader.read();
+      if (done) break;
+      resetTimeout();
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split(/\n/);
+      buffer = lines.pop() ?? "";
+
+      for (const rawLine of lines) {
+        const line = rawLine.replace(/\r$/, "").trim();
+        if (!line) continue;
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice("data:".length).trim();
+        if (!data) continue;
+        if (data === "[DONE]") return;
+
+        let json: ChatCompletionStreamChunk | null = null;
+        try {
+          json = JSON.parse(data) as ChatCompletionStreamChunk;
+        } catch {
+          json = null;
+        }
+        const delta = json?.choices?.[0]?.delta?.content;
+        if (typeof delta === "string" && delta.length) {
+          onDelta(delta);
+        }
+      }
+    }
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", abortListener);
+  }
 }
 
 function buildLocalSummary(transcript: string) {
@@ -250,6 +696,9 @@ export async function POST(req: Request) {
     );
   }
 
+  const url = new URL(req.url);
+  const streamRequested = true;
+
   if (!transcript || typeof transcript !== "string") {
     return NextResponse.json(
       { error: "Transcript is required." },
@@ -263,6 +712,17 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: "Transcript cannot be empty." },
       { status: 400 }
+    );
+  }
+
+  if (trimmedTranscript.length > TRANSCRIPT_LIMIT_CHARS) {
+    return NextResponse.json(
+      {
+        error: `Transcript is too long (>${TRANSCRIPT_LIMIT_CHARS} chars). Please shorten it.`,
+        limitChars: TRANSCRIPT_LIMIT_CHARS,
+        actualChars: trimmedTranscript.length,
+      },
+      { status: 413 }
     );
   }
 
@@ -280,81 +740,107 @@ export async function POST(req: Request) {
   const language = detectLanguage(trimmedTranscript);
   const model = getChatProviderModel(provider);
   const endpoint = getChatProviderEndpoint(provider);
+  const upstreamTimeoutMs = resolveUpstreamTimeoutMs();
+  const systemPrompt =
+    typeof prompt === "string" && prompt.trim().length
+      ? prompt.trim()
+      : MEETING_SUMMARY_PROMPT;
 
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+  if (streamRequested) {
+    const encoder = new TextEncoder();
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        let closed = false;
+
+        const enqueue = (text: string) => {
+          if (closed || req.signal.aborted) return;
+          try {
+            controller.enqueue(encoder.encode(text));
+          } catch {
+            closed = true;
+          }
+        };
+
+        const send = (event: string, data: unknown) => {
+          enqueue(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        const sendStatus = (phase: StreamStatusPhase, extra?: any) => {
+          send("status", { phase, ...extra });
+        };
+
+        const close = () => {
+          if (closed) return;
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // ignore
+          }
+        };
+
+        const abort = () => close();
+        req.signal.addEventListener("abort", abort, { once: true });
+        const pingId = setInterval(() => enqueue(": ping\n\n"), 20_000);
+
+        const run = async () => {
+          try {
+            sendStatus("starting", { provider, model });
+            sendStatus("streaming");
+            await streamChatCompletion({
+              endpoint,
+              apiKey,
+              model,
+              prompt: systemPrompt,
+              userContent: trimmedTranscript,
+              timeoutMs: upstreamTimeoutMs,
+              signal: req.signal,
+              onDelta(text) {
+                send("delta", { text });
+              },
+            });
+            sendStatus("done");
+            send("done", { ok: true, source: "single", provider, model });
+          } catch (error) {
+            console.error("[trial-summarize][stream]", { provider, error });
+            const message =
+              error instanceof Error ? error.message : "Upstream error.";
+            sendStatus("error");
+            send("error", { message, retriable: isRetriableError(error) });
+          } finally {
+            clearInterval(pingId);
+            close();
+          }
+        };
+
+        void run();
       },
-      cache: "no-store",
-      body: JSON.stringify({
-        model,
-        temperature: 0.4,
-        messages: [
-          {
-            role: "system",
-            content:
-              typeof prompt === "string" && prompt.trim().length
-                ? prompt.trim()
-                : MEETING_SUMMARY_PROMPT,
-          },
-          {
-            role: "user",
-            content: trimmedTranscript,
-          },
-        ],
-        stream: false,
-      }),
     });
 
-    const raw = await response.text();
-    let data: ChatCompletionChunk | null = null;
-    try {
-      data = raw ? (JSON.parse(raw) as ChatCompletionChunk) : null;
-    } catch (parseError) {
-      console.error("[trial-summarize] Failed to parse provider response", {
-        provider,
-        message: (parseError as Error).message,
-        preview: raw.slice(0, 200),
-      });
-    }
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  }
 
-    if (!response.ok) {
-      const message =
-        data?.error?.message ||
-        `${providerLabel} error (${response.status}): ${raw.slice(0, 120)}`;
-      return NextResponse.json({ error: message }, { status: response.status });
-    }
-
-    if (!data) {
-      return NextResponse.json(
-        {
-          error: `${providerLabel} 返回内容格式异常，请稍后再试或联系管理员查看响应日志。`,
-        },
-        { status: 502 }
-      );
-    }
-
-    const summary = extractMessageContent(data);
-
-    if (!summary) {
-      return NextResponse.json(
-        { error: "No content returned from the AI model." },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({ summary, provider, model });
+  try {
+    return NextResponse.json({
+      error:
+        "This endpoint now streams by default. Please consume it as text/event-stream.",
+    });
   } catch (error) {
     console.error("[trial-summarize]", { provider, error });
-    const fallbackSummary = buildLocalSummary(trimmedTranscript);
     return NextResponse.json(
       {
-        summary: fallbackSummary,
-        warning: FALLBACK_COPY[language].warning,
-        source: "local-fallback",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Upstream error.",
       },
       { status: 200 }
     );

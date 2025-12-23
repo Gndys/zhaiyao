@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import MarkdownIt from "markdown-it";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -14,6 +15,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { readSSE } from "@/lib/sse";
 
 const LANGUAGES = [
   { value: "zh-CN", label: "中文（普通话）" },
@@ -41,13 +43,26 @@ export function RealtimeTranscriber() {
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const finalSentencesRef = useRef<string[]>([]);
+  const sessionStartRef = useRef<number | null>(null);
+  const summaryRef = useRef<HTMLDivElement | null>(null);
+  const mdRef = useRef<MarkdownIt | null>(null);
+  const streamedSummaryRef = useRef("");
+  const flushRafRef = useRef<number | null>(null);
   const [language, setLanguage] = useState("zh-CN");
   const [isListening, setIsListening] = useState(false);
   const [isSupported, setIsSupported] = useState(true);
   const [interimText, setInterimText] = useState("");
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [exportingDoc, setExportingDoc] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [summary, setSummary] = useState("");
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [showSummary, setShowSummary] = useState(false);
+  const [isExportingSummary, setIsExportingSummary] = useState(false);
+  const [summaryPrompt, setSummaryPrompt] = useState("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -74,6 +89,10 @@ export function RealtimeTranscriber() {
 
     return () => {
       stopListening();
+      if (flushRafRef.current) {
+        cancelAnimationFrame(flushRafRef.current);
+        flushRafRef.current = null;
+      }
     };
   }, []);
 
@@ -124,9 +143,11 @@ export function RealtimeTranscriber() {
     }
     wsRef.current = null;
 
+    flushInterimToFinal();
     cleanupAudio();
     setIsListening(false);
     setInterimText("");
+    sessionStartRef.current = null;
   };
 
   const cleanupAudio = () => {
@@ -163,6 +184,7 @@ export function RealtimeTranscriber() {
           setTranscript("");
           setInterimText("正在聆听...");
           setError(null);
+          sessionStartRef.current = Date.now();
           resolve();
         } catch (err) {
           reject(err);
@@ -180,9 +202,10 @@ export function RealtimeTranscriber() {
 
       ws.onclose = () => {
         cleanupAudio();
-        setIsListening(false);
-        setInterimText("");
-      };
+    setIsListening(false);
+    setInterimText("");
+    sessionStartRef.current = null;
+  };
     });
   };
 
@@ -215,11 +238,15 @@ export function RealtimeTranscriber() {
       }
 
       if (result.slice_type === 2) {
+        const now = Date.now();
+        const start = sessionStartRef.current ?? now;
+        const elapsedMs = Math.max(0, now - start);
+        const timestamp = formatElapsed(elapsedMs);
         finalSentencesRef.current[result.index ?? finalSentencesRef.current.length] =
-          textStr;
+          `[${timestamp}] ${textStr}`;
         const merged = finalSentencesRef.current.filter(Boolean).join("\n");
         setTranscript(merged);
-        setLastUpdated(Date.now());
+        setLastUpdated(now);
         setInterimText("");
       }
     } catch (err) {
@@ -299,27 +326,245 @@ export function RealtimeTranscriber() {
     setInterimText("");
     setLastUpdated(null);
     finalSentencesRef.current = [];
+    setExportError(null);
+    setSummary("");
+    setSummaryError(null);
+    setShowSummary(false);
+    setIsExportingSummary(false);
+    sessionStartRef.current = null;
   };
 
   const statusLabel = isListening ? "采集中" : "未开始";
   const statusTone = isListening ? "bg-green-500/20 text-green-700" : "bg-muted";
 
   const compatibilityNote = useMemo(() => {
-    if (isSupported) {
-      return "麦克风音频会在本地降采样后直连腾讯实时 ASR（WebSocket），不依赖浏览器自带语音识别。";
-    }
+    if (isSupported) return null;
     return "当前浏览器不支持麦克风录制或未运行在安全连接下，请在 HTTPS/localhost 的 Chrome 或 Edge 中使用。";
   }, [isSupported]);
 
+  const handleExportWord = async () => {
+    const exportText = [transcript.trim(), interimText.trim()]
+      .filter(Boolean)
+      .join("\n\n");
+    if (!exportText || exportingDoc) return;
+
+    setExportError(null);
+    setExportingDoc(true);
+    try {
+      const { Document, Packer, Paragraph } = await import("docx");
+      const lines = exportText.split(/\r?\n/);
+      const doc = new Document({
+        sections: [
+          {
+            children:
+              lines.length > 0
+                ? lines.map((line) => new Paragraph(line || " "))
+                : [new Paragraph(" ")],
+          },
+        ],
+      });
+
+      const blob = await Packer.toBlob(doc);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `zhaiyao-realtime-${new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")}.docx`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (err) {
+      console.error("[realtime] export word failed", err);
+      setExportError("导出 Word 文件失败，请稍后再试。");
+    } finally {
+      setExportingDoc(false);
+    }
+  };
+
+  const canExport = Boolean(transcript.trim() || interimText.trim());
+  const canSummarize = Boolean(transcript.trim()) && !isListening && !isSummarizing;
+  const canExportSummaryPdf = Boolean(summary.trim()) && !isExportingSummary;
+
+  const flushStreamedSummary = (immediate = false) => {
+    if (immediate) {
+      if (flushRafRef.current) {
+        cancelAnimationFrame(flushRafRef.current);
+        flushRafRef.current = null;
+      }
+      setSummary(streamedSummaryRef.current);
+      return;
+    }
+
+    if (flushRafRef.current) return;
+    flushRafRef.current = requestAnimationFrame(() => {
+      flushRafRef.current = null;
+      setSummary(streamedSummaryRef.current);
+    });
+  };
+
+  const handleSummarize = async () => {
+    const content = transcript.trim();
+    if (!content || isListening || isSummarizing) return;
+    setShowSummary(true);
+    setSummaryError(null);
+    setIsSummarizing(true);
+    setSummary("");
+    streamedSummaryRef.current = "";
+    try {
+      const response = await fetch("/api/trial-summarize?stream=1", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          transcript: content,
+          provider: "deepseek",
+          prompt: summaryPrompt.trim() || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || "生成摘要失败，请稍后重试。");
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("text/event-stream")) {
+        const data = await response.json().catch(() => ({}));
+        setSummary(typeof data.summary === "string" ? data.summary : "");
+        if (!data.summary) {
+          setSummaryError("生成摘要为空，请重试。");
+        }
+        return;
+      }
+
+      await readSSE(response, (message) => {
+        let payload: any = null;
+        try {
+          payload = message.data ? JSON.parse(message.data) : null;
+        } catch {
+          payload = null;
+        }
+
+        if (message.event === "delta") {
+          const text = payload?.text as string | undefined;
+          if (typeof text === "string" && text.length) {
+            streamedSummaryRef.current += text;
+            flushStreamedSummary(false);
+          }
+          return;
+        }
+
+        if (message.event === "done") {
+          flushStreamedSummary(true);
+          return;
+        }
+
+        if (message.event === "error") {
+          const text = payload?.message;
+          if (typeof text === "string" && text.trim()) {
+            setSummaryError(text);
+          }
+        }
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "生成摘要失败，请稍后重试。";
+      setSummaryError(message);
+    } finally {
+      setIsSummarizing(false);
+      flushStreamedSummary(true);
+    }
+  };
+
+  const handleExportSummaryPdf = async () => {
+    if (!summaryRef.current || !summary.trim() || isExportingSummary) return;
+    setIsExportingSummary(true);
+    try {
+      const html = summaryRef.current.innerHTML;
+      const printWindow = window.open("", "_blank", "width=1024,height=768");
+      if (!printWindow) {
+        throw new Error("无法打开打印窗口，请允许浏览器弹窗。");
+      }
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>逐字稿摘要</title>
+            <style>
+              body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; padding: 24px; background: #f1f5f9; }
+              .summary-wrapper { background: #ffffff; border-radius: 18px; padding: 32px; box-shadow: 0 20px 60px rgba(15,23,42,0.08); line-height: 1.7; }
+              h1,h2,h3,h4 { color: #0f172a; margin-top: 1.4em; }
+              p,li { color: #1f2937; }
+              ul,ol { padding-left: 24px; }
+            </style>
+          </head>
+          <body>
+            <div class="summary-wrapper">${html}</div>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      printWindow.print();
+      printWindow.close();
+    } catch (err) {
+      console.error("[realtime][summary-pdf]", err);
+      setSummaryError("导出摘要 PDF 失败，请稍后再试。");
+    } finally {
+      setIsExportingSummary(false);
+    }
+  };
+
+  function formatElapsed(ms: number) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+  }
+
+  function formatSummaryHtml(text: string) {
+    const value = text.trim();
+    if (!value) return "";
+    if (!mdRef.current) {
+      mdRef.current = new MarkdownIt({
+        html: false,
+        linkify: true,
+        breaks: true,
+      });
+    }
+    return mdRef.current.render(value);
+  }
+
+  function flushInterimToFinal() {
+    const text = interimText.trim();
+    if (!text) return;
+    const now = Date.now();
+    const start = sessionStartRef.current ?? now;
+    const elapsedMs = Math.max(0, now - start);
+    const timestamp = formatElapsed(elapsedMs);
+    finalSentencesRef.current.push(`[${timestamp}] ${text}`);
+    const merged = finalSentencesRef.current.filter(Boolean).join("\n");
+    setTranscript(merged);
+    setLastUpdated(now);
+    setInterimText("");
+  }
+
   return (
     <div className="space-y-6">
-      <Card className="shadow-lg">
-        <CardHeader className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <CardTitle>实时采集控制台</CardTitle>
+      <Card className="shadow-lg dark:border-slate-800 dark:bg-slate-900">
+        <CardHeader className="space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <CardTitle className="text-foreground dark:text-slate-100">
+              实时采集控制台
+            </CardTitle>
             <Badge className={cn(statusTone)}>{statusLabel}</Badge>
           </div>
-          <p className="text-sm text-muted-foreground">{compatibilityNote}</p>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
@@ -349,7 +594,7 @@ export function RealtimeTranscriber() {
             </div>
             <div className="space-y-2">
               <Label>最近更新时间</Label>
-              <p className="rounded-2xl border border-border/70 bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
+              <p className="rounded-2xl border border-border/70 bg-muted/40 px-4 py-2 text-sm text-muted-foreground dark:border-slate-800 dark:bg-slate-800 dark:text-slate-200">
                 {lastUpdated
                   ? new Date(lastUpdated).toLocaleTimeString()
                   : "尚无数据"}
@@ -362,17 +607,36 @@ export function RealtimeTranscriber() {
               {error}
             </p>
           )}
+          {exportError && (
+            <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600">
+              {exportError}
+            </p>
+          )}
 
           <div className="flex flex-wrap gap-3">
             <Button onClick={startListening} disabled={!isSupported || isListening}>
               {isListening ? "正在转写..." : "开始实时转写"}
             </Button>
             <Button
-              variant="outline"
+              variant="destructive"
               onClick={stopListening}
               disabled={!isListening}
             >
-              暂停
+              结束转写
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={handleSummarize}
+              disabled={!canSummarize}
+            >
+              {isSummarizing ? "摘要生成中..." : "生成摘要"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleExportWord}
+              disabled={!canExport || exportingDoc}
+            >
+              {exportingDoc ? "导出中..." : "导出 Word"}
             </Button>
             <Button
               variant="ghost"
@@ -382,6 +646,19 @@ export function RealtimeTranscriber() {
               清空内容
             </Button>
           </div>
+          <div className="space-y-2">
+            <Label className="text-sm">摘要提示词（可选）</Label>
+            <Textarea
+              value={summaryPrompt}
+              onChange={(event) => setSummaryPrompt(event.target.value)}
+              rows={4}
+              placeholder="留空则使用默认会议摘要提示词。这里填写可覆盖默认输出结构/风格。"
+              className="bg-background text-foreground dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            />
+          </div>
+          {compatibilityNote && (
+            <p className="text-xs text-muted-foreground">{compatibilityNote}</p>
+          )}
         </CardContent>
       </Card>
 
@@ -398,8 +675,40 @@ export function RealtimeTranscriber() {
           </div>
           <div className="space-y-2">
             <Label className="text-sm">逐字稿结果</Label>
-            <Textarea value={transcript} rows={10} readOnly />
+              <Textarea
+                value={transcript}
+                rows={10}
+                readOnly
+                className="bg-background text-foreground dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
           </div>
+          {showSummary && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Label className="text-sm">摘要</Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExportSummaryPdf}
+                  disabled={!canExportSummaryPdf}
+                >
+                  {isExportingSummary ? "导出中..." : "导出摘要 PDF"}
+                </Button>
+              </div>
+              {summaryError && (
+                <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600">
+                  {summaryError}
+                </p>
+              )}
+              <div className="rounded-2xl border border-dashed border-border/60 bg-muted/30 p-4 dark:border-slate-700 dark:bg-slate-800/80">
+                <div
+                  ref={summaryRef}
+                  className="min-h-[120px] whitespace-pre-wrap text-sm leading-6 text-muted-foreground"
+                  dangerouslySetInnerHTML={{ __html: formatSummaryHtml(summary || (isSummarizing ? "摘要生成中..." : "")) }}
+                />
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

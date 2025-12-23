@@ -7,6 +7,9 @@ import {
   resolveChatProvider,
 } from "@/lib/chat-providers";
 
+export const runtime = "nodejs";
+export const maxDuration = 30;
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const providerInput = searchParams.get("provider") ?? undefined;

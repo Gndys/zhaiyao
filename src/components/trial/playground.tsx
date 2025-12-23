@@ -42,6 +42,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { useTrialContext } from "@/components/trial/trial-context";
+import { readSSE } from "@/lib/sse";
 
 const MAX_CHARACTERS = 20000;
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -121,6 +122,7 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
+  const [streamStatusText, setStreamStatusText] = useState<string | null>(null);
   const [healthStatus, setHealthStatus] = useState<string | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
@@ -159,6 +161,10 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
+      if (flushRafRef.current) {
+        cancelAnimationFrame(flushRafRef.current);
+        flushRafRef.current = null;
+      }
     };
   }, []);
 
@@ -166,6 +172,26 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
     setHealthStatus(null);
     setHealthError(null);
   }, [provider]);
+
+  const streamedSummaryRef = useRef("");
+  const flushRafRef = useRef<number | null>(null);
+
+  const flushStreamedSummary = (immediate = false) => {
+    if (immediate) {
+      if (flushRafRef.current) {
+        cancelAnimationFrame(flushRafRef.current);
+        flushRafRef.current = null;
+      }
+      setSummary(streamedSummaryRef.current);
+      return;
+    }
+
+    if (flushRafRef.current) return;
+    flushRafRef.current = requestAnimationFrame(() => {
+      flushRafRef.current = null;
+      setSummary(streamedSummaryRef.current);
+    });
+  };
 
   const handleFileChange = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -251,8 +277,10 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
     setError(null);
     setSummary("");
     setWarning(null);
+    setStreamStatusText(null);
     setElapsedMs(0);
     setSubmissionPhase("sending");
+    streamedSummaryRef.current = "";
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
     }
@@ -262,10 +290,11 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
 
     try {
       setSubmissionPhase("sending");
-      const response = await fetch("/api/trial-summarize", {
+      const response = await fetch("/api/trial-summarize?stream=1", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Accept: "text/event-stream",
         },
         body: JSON.stringify({
           transcript: trimmedTranscript,
@@ -275,15 +304,71 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
       });
       setSubmissionPhase("waiting");
 
-      const data = await response.json();
-
       if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         throw new Error(data?.error || copy.errors.general);
       }
 
-      setSubmissionPhase("rendering");
-      setSummary(data.summary);
-      setWarning(data.warning ?? null);
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("text/event-stream")) {
+        const data = await response.json().catch(() => ({}));
+        setSubmissionPhase("rendering");
+        setSummary(data.summary);
+        setWarning(data.warning ?? null);
+        setSubmissionPhase("input");
+        return;
+      }
+
+      await readSSE(response, (message) => {
+        let payload: any = null;
+        try {
+          payload = message.data ? JSON.parse(message.data) : null;
+        } catch {
+          payload = null;
+        }
+
+        if (message.event === "status") {
+          const phase = payload?.phase as string | undefined;
+          const label =
+            phase === "starting"
+              ? `连接 ${providerLabel}...`
+              : phase === "streaming"
+              ? "生成中..."
+              : phase === "done"
+              ? null
+              : phase === "error"
+              ? "生成失败"
+              : null;
+          setStreamStatusText(label);
+          return;
+        }
+
+        if (message.event === "delta") {
+          const text = payload?.text as string | undefined;
+          if (typeof text === "string" && text.length) {
+            streamedSummaryRef.current += text;
+            flushStreamedSummary(false);
+          }
+          return;
+        }
+
+        if (message.event === "done") {
+          flushStreamedSummary(true);
+          if (typeof payload?.warning === "string") {
+            setWarning(payload.warning);
+          }
+          return;
+        }
+
+        if (message.event === "error") {
+          const text = payload?.message;
+          if (typeof text === "string" && text.trim()) {
+            setWarning(text);
+          }
+          return;
+        }
+      });
+
       setSubmissionPhase("input");
     } catch (err) {
       const message =
@@ -292,6 +377,8 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
       setSubmissionPhase("input");
     } finally {
       setIsSubmitting(false);
+      setStreamStatusText(null);
+      flushStreamedSummary(true);
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
@@ -628,7 +715,7 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
                     {submissionPhase === "sending"
                       ? "正在发送请求..."
                       : submissionPhase === "waiting"
-                      ? `等待 ${providerLabel} 响应...`
+                      ? streamStatusText || `等待 ${providerLabel} 响应...`
                       : "渲染摘要..."}
                   </p>
                   <p className="text-xs text-muted-foreground">
