@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "cross-env NODE_NO_WARNINGS=1 next dev --turbopack",
     "build": "next build",
-    "start": "NODE_NO_WARNINGS=1 next start",
+    "start": "NODE_NO_WARNINGS=1 HOSTNAME=0.0.0.0 node .next/standalone/server.js",
     "lint": "next lint",
     "analyze": "ANALYZE=true pnpm build",
     "docker:build": "docker build -f Dockerfile -t shipany-template-one:latest .",
