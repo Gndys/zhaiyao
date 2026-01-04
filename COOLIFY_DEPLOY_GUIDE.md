@@ -63,6 +63,13 @@ Next.js 的 `NEXT_PUBLIC_*` 变量会在 `pnpm build`（构建阶段）被内联
    - 登录/回调 URL 正确（如启用 NextAuth/OAuth）
    - 相关 API（如生成摘要）能正常调用外部服务（数据库、阿里云、AI 网关等）
 
+## 4.2) 健康检查（推荐配置）
+
+Coolify/Traefik 出现 **Running (unknown)** 或访问提示 **no available server** 时，优先把端口与健康检查配清楚：
+
+- 端口：确保应用的 **Container Port** 为 `3000`
+- Health Check Path：建议用本项目提供的 `GET /api/health`（永远返回 `200`）
+
 ## 4.1) 非 Dockerfile 部署（不推荐，但可用）
 
 如果你不想用 Dockerfile（例如使用 Coolify 的 Node/Nixpacks 预设），在 `next.config.mjs` 启用了 `output: "standalone"` 的情况下：
