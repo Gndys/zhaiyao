@@ -7,6 +7,7 @@ import {
   getChatProviderModel,
   resolveChatProvider,
 } from "@/lib/chat-providers";
+import { pushPlusSendReport } from "@/lib/pushplus";
 
 type SupportedLang = "zh" | "en";
 
@@ -176,7 +177,6 @@ const MAX_TRANSCRIPT_CHARS = 10_000;
 const CHUNK_TARGET_CHARS = 3_500;
 const MAX_CHUNKS = 16;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 240_000;
-const DEFAULT_MAX_TOKENS = 1_200;
 const DEFAULT_CHUNK_CONCURRENCY = 2;
 
 function resolveChunkConcurrency() {
@@ -434,7 +434,6 @@ async function callChatCompletion({
         body: JSON.stringify({
           model,
           temperature: 0.4,
-          max_tokens: DEFAULT_MAX_TOKENS,
           messages: [
             { role: "system", content: prompt },
             { role: "user", content: userContent },
@@ -834,6 +833,9 @@ export async function POST(req: Request) {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         let closed = false;
+        let fullText = "";
+        let aiSource: "stream" | "nonstream-fallback" | "local-fallback" =
+          "stream";
 
         const enqueue = (text: string) => {
           if (closed || req.signal.aborted) return;
@@ -867,23 +869,86 @@ export async function POST(req: Request) {
         const pingId = setInterval(() => enqueue(": ping\n\n"), 20_000);
 
         const run = async () => {
+          const sendDone = (warning?: string) => {
+            sendStatus("done");
+            send("done", { ok: true, source: aiSource, provider, model, warning });
+            if (fullText.trim().length && aiSource !== "local-fallback") {
+              void pushPlusSendReport({
+                title: `会议摘要 · ${providerLabel}`,
+                content: fullText.trim(),
+                meta: { provider, model, source: aiSource },
+              }).then((result) => {
+                if (!result.ok && !result.skipped) {
+                  console.error("[trial-summarize][pushplus]", result);
+                }
+              });
+            }
+          };
+
           try {
             sendStatus("starting", { provider, model });
             sendStatus("streaming");
-            await streamChatCompletion({
-              endpoint,
-              apiKey,
-              model,
-              prompt: systemPrompt,
-              userContent: trimmedTranscript,
-              timeoutMs: upstreamTimeoutMs,
-              signal: req.signal,
-              onDelta(text) {
-                send("delta", { text });
-              },
-            });
-            sendStatus("done");
-            send("done", { ok: true, source: "single", provider, model });
+            try {
+              await streamChatCompletion({
+                endpoint,
+                apiKey,
+                model,
+                prompt: systemPrompt,
+                userContent: trimmedTranscript,
+                timeoutMs: upstreamTimeoutMs,
+                signal: req.signal,
+                onDelta(text) {
+                  fullText += text;
+                  send("delta", { text });
+                },
+              });
+              sendDone();
+            } catch (error) {
+              if (req.signal.aborted) return;
+              const message =
+                error instanceof Error ? error.message : "Upstream error.";
+              const isNoStreamDelta =
+                typeof message === "string" &&
+                message.includes("did not stream any content");
+
+              if (fullText.trim().length) {
+                aiSource = "stream";
+                sendDone("⚠️ 上游流式输出未正常结束，已提前收尾。");
+                return;
+              }
+
+              if (isNoStreamDelta) {
+                aiSource = "nonstream-fallback";
+                try {
+                  const content = await callChatCompletion({
+                    endpoint,
+                    apiKey,
+                    model,
+                    prompt: systemPrompt,
+                    userContent: trimmedTranscript,
+                    timeoutMs: upstreamTimeoutMs,
+                    signal: req.signal,
+                  });
+                  fullText = content;
+                  send("delta", { text: content });
+                  sendDone("⚠️ 上游未返回可解析的流式数据，已自动切换为非流式获取结果。");
+                  return;
+                } catch (fallbackError) {
+                  aiSource = "local-fallback";
+                  const local = buildLocalSummary(trimmedTranscript);
+                  fullText = local;
+                  send("delta", { text: local });
+                  sendDone(
+                    fallbackError instanceof Error
+                      ? `⚠️ 上游生成失败，已降级为本地简版摘要：${fallbackError.message}`
+                      : "⚠️ 上游生成失败，已降级为本地简版摘要。"
+                  );
+                  return;
+                }
+              }
+
+              throw error;
+            }
           } catch (error) {
             if (req.signal.aborted) {
               return;
@@ -895,10 +960,23 @@ export async function POST(req: Request) {
             if (!isAbortError) {
               console.error("[trial-summarize][stream]", { provider, error });
             }
-            const message =
-              error instanceof Error ? error.message : "Upstream error.";
-            sendStatus("error");
-            send("error", { message, retriable: isRetriableError(error) });
+            if (fullText.trim().length) {
+              aiSource = "stream";
+              sendDone("⚠️ 上游流式输出中断，已提前收尾。");
+              return;
+            }
+
+            aiSource = "local-fallback";
+            const local = buildLocalSummary(trimmedTranscript);
+            fullText = local;
+            send("delta", { text: local });
+            sendDone(
+              isAbortError
+                ? "⚠️ 上游连接中断，已降级为本地简版摘要。"
+                : error instanceof Error
+                  ? `⚠️ 上游生成失败，已降级为本地简版摘要：${error.message}`
+                  : "⚠️ 上游生成失败，已降级为本地简版摘要。"
+            );
           } finally {
             clearInterval(pingId);
             close();

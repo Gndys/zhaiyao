@@ -67,6 +67,14 @@ DEVDOVE_MODEL=gemini-2.5-flash
 NEXT_PUBLIC_DEFAULT_CHAT_PROVIDER=devdove
 ```
 
+#### 微信推送（PushPlus，可选）
+配置后，每次生成 AI 摘要都会通过 PushPlus 一对一推送到微信。
+```
+PUSHPLUS_TOKEN=你的 PushPlus token
+PUSHPLUS_TEMPLATE=markdown # 可选：markdown / txt / html / json
+PUSHPLUS_MAX_CHARS=6000 # 可选：消息过长时自动截断
+```
+
 ### 3. 部署
 配置完环境变量后，点击 "Deploy" 开始部署。
 

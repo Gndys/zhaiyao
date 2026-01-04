@@ -363,14 +363,14 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
             return;
           }
 
-          if (message.event === "done") {
-            flushStreamedSummary(true);
-            if (typeof payload?.warning === "string") {
-              setWarning(payload.warning);
-            }
-            sseAbortController?.abort();
-            return;
+        if (message.event === "done") {
+          flushStreamedSummary(true);
+          if (typeof payload?.warning === "string" && payload.warning.trim()) {
+            setWarning(payload.warning);
           }
+          sseAbortController?.abort();
+          return;
+        }
 
           if (message.event === "error") {
             const text = payload?.message;
