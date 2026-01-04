@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { readSSE } from "@/lib/sse";
+import { getDefaultChatProvider } from "@/config/chat-providers";
 
 const LANGUAGES = [
   { value: "zh-CN", label: "中文（普通话）" },
@@ -412,6 +413,8 @@ export function RealtimeTranscriber() {
     setIsSummarizing(true);
     setSummary("");
     streamedSummaryRef.current = "";
+    let sseAbortController: AbortController | null = null;
+    let sseHardTimeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
       const response = await fetch("/api/trial-summarize?stream=1", {
         method: "POST",
@@ -421,7 +424,7 @@ export function RealtimeTranscriber() {
         },
         body: JSON.stringify({
           transcript: content,
-          provider: "deepseek",
+          provider: getDefaultChatProvider(),
           prompt: summaryPrompt.trim() || undefined,
         }),
       });
@@ -441,35 +444,47 @@ export function RealtimeTranscriber() {
         return;
       }
 
-      await readSSE(response, (message) => {
-        let payload: any = null;
-        try {
-          payload = message.data ? JSON.parse(message.data) : null;
-        } catch {
-          payload = null;
-        }
+      sseAbortController = new AbortController();
+      sseHardTimeoutId = setTimeout(() => {
+        setSummaryError("本次生成耗时过长，已停止等待（上游未正确结束流式输出）。");
+        sseAbortController?.abort();
+      }, 5 * 60_000);
 
-        if (message.event === "delta") {
-          const text = payload?.text as string | undefined;
-          if (typeof text === "string" && text.length) {
-            streamedSummaryRef.current += text;
-            flushStreamedSummary(false);
+      await readSSE(
+        response,
+        (message) => {
+          let payload: any = null;
+          try {
+            payload = message.data ? JSON.parse(message.data) : null;
+          } catch {
+            payload = null;
           }
-          return;
-        }
 
-        if (message.event === "done") {
-          flushStreamedSummary(true);
-          return;
-        }
-
-        if (message.event === "error") {
-          const text = payload?.message;
-          if (typeof text === "string" && text.trim()) {
-            setSummaryError(text);
+          if (message.event === "delta") {
+            const text = payload?.text as string | undefined;
+            if (typeof text === "string" && text.length) {
+              streamedSummaryRef.current += text;
+              flushStreamedSummary(false);
+            }
+            return;
           }
-        }
-      });
+
+          if (message.event === "done") {
+            flushStreamedSummary(true);
+            sseAbortController?.abort();
+            return;
+          }
+
+          if (message.event === "error") {
+            const text = payload?.message;
+            if (typeof text === "string" && text.trim()) {
+              setSummaryError(text);
+            }
+            sseAbortController?.abort();
+          }
+        },
+        { signal: sseAbortController.signal }
+      );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "生成摘要失败，请稍后重试。";
@@ -477,6 +492,10 @@ export function RealtimeTranscriber() {
     } finally {
       setIsSummarizing(false);
       flushStreamedSummary(true);
+      if (sseHardTimeoutId) {
+        clearTimeout(sseHardTimeoutId);
+      }
+      sseAbortController?.abort();
     }
   };
 

@@ -288,6 +288,9 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
       setElapsedMs((prev) => prev + 100);
     }, 100);
 
+    let sseAbortController: AbortController | null = null;
+    let sseHardTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
     try {
       setSubmissionPhase("sending");
       const response = await fetch("/api/trial-summarize?stream=1", {
@@ -319,55 +322,67 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
         return;
       }
 
-      await readSSE(response, (message) => {
-        let payload: any = null;
-        try {
-          payload = message.data ? JSON.parse(message.data) : null;
-        } catch {
-          payload = null;
-        }
+      sseAbortController = new AbortController();
+      sseHardTimeoutId = setTimeout(() => {
+        setWarning("本次生成耗时过长，已停止等待（上游未正确结束流式输出）。");
+        sseAbortController?.abort();
+      }, 5 * 60_000);
 
-        if (message.event === "status") {
-          const phase = payload?.phase as string | undefined;
-          const label =
-            phase === "starting"
-              ? `连接 ${providerLabel}...`
-              : phase === "streaming"
-              ? "生成中..."
-              : phase === "done"
-              ? null
-              : phase === "error"
-              ? "生成失败"
-              : null;
-          setStreamStatusText(label);
-          return;
-        }
-
-        if (message.event === "delta") {
-          const text = payload?.text as string | undefined;
-          if (typeof text === "string" && text.length) {
-            streamedSummaryRef.current += text;
-            flushStreamedSummary(false);
+      await readSSE(
+        response,
+        (message) => {
+          let payload: any = null;
+          try {
+            payload = message.data ? JSON.parse(message.data) : null;
+          } catch {
+            payload = null;
           }
-          return;
-        }
 
-        if (message.event === "done") {
-          flushStreamedSummary(true);
-          if (typeof payload?.warning === "string") {
-            setWarning(payload.warning);
+          if (message.event === "status") {
+            const phase = payload?.phase as string | undefined;
+            const label =
+              phase === "starting"
+                ? `连接 ${providerLabel}...`
+                : phase === "streaming"
+                ? "生成中..."
+                : phase === "done"
+                ? null
+                : phase === "error"
+                ? "生成失败"
+                : null;
+            setStreamStatusText(label);
+            return;
           }
-          return;
-        }
 
-        if (message.event === "error") {
-          const text = payload?.message;
-          if (typeof text === "string" && text.trim()) {
-            setWarning(text);
+          if (message.event === "delta") {
+            const text = payload?.text as string | undefined;
+            if (typeof text === "string" && text.length) {
+              streamedSummaryRef.current += text;
+              flushStreamedSummary(false);
+            }
+            return;
           }
-          return;
-        }
-      });
+
+          if (message.event === "done") {
+            flushStreamedSummary(true);
+            if (typeof payload?.warning === "string") {
+              setWarning(payload.warning);
+            }
+            sseAbortController?.abort();
+            return;
+          }
+
+          if (message.event === "error") {
+            const text = payload?.message;
+            if (typeof text === "string" && text.trim()) {
+              setWarning(text);
+            }
+            sseAbortController?.abort();
+            return;
+          }
+        },
+        { signal: sseAbortController.signal }
+      );
 
       setSubmissionPhase("input");
     } catch (err) {
@@ -383,6 +398,10 @@ export function TrialPlayground({ copy }: TrialPlaygroundProps) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
+      if (sseHardTimeoutId) {
+        clearTimeout(sseHardTimeoutId);
+      }
+      sseAbortController?.abort();
     }
   };
 

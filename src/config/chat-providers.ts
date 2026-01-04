@@ -1,18 +1,18 @@
+export type ChatProviderId = "apimart" | "devdove" | "deepseek";
+
 const CHAT_PROVIDER_OPTIONS = [
   {
-    id: "apimart",
-    label: "APIMart · Gemini",
-    modelHint: "gemini-3-pro-preview",
+    id: "devdove",
+    label: "DevDove · Gemini",
+    modelHint: "gemini-2.5-flash",
   },
-  {
-    id: "deepseek",
-    label: "DeepSeek · Chat",
-    modelHint: "deepseek-chat",
-  },
-] as const;
+] as const satisfies ReadonlyArray<{
+  id: ChatProviderId;
+  label: string;
+  modelHint: string;
+}>;
 
 export type ChatProviderOption = (typeof CHAT_PROVIDER_OPTIONS)[number];
-export type ChatProviderId = ChatProviderOption["id"];
 
 const PROVIDER_SET = new Set<ChatProviderId>(
   CHAT_PROVIDER_OPTIONS.map((option) => option.id)

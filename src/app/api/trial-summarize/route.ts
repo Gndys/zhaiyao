@@ -494,9 +494,29 @@ type ChatCompletionStreamChunk = {
       content?: string;
       reasoning_content?: string;
     };
+    finish_reason?: string | null;
   }>;
   error?: { message?: string };
 };
+
+const DEFAULT_STREAM_IDLE_DONE_MS = 25_000;
+const DEFAULT_STREAM_FIRST_DELTA_TIMEOUT_MS = 60_000;
+
+function resolveStreamIdleDoneMs() {
+  const raw = process.env.TRIAL_SUMMARIZE_STREAM_IDLE_DONE_MS?.trim();
+  if (!raw) return DEFAULT_STREAM_IDLE_DONE_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_STREAM_IDLE_DONE_MS;
+  return Math.max(5_000, Math.min(300_000, Math.floor(parsed)));
+}
+
+function resolveStreamFirstDeltaTimeoutMs() {
+  const raw = process.env.TRIAL_SUMMARIZE_STREAM_FIRST_DELTA_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_STREAM_FIRST_DELTA_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_STREAM_FIRST_DELTA_TIMEOUT_MS;
+  return Math.max(5_000, Math.min(300_000, Math.floor(parsed)));
+}
 
 async function streamChatCompletion({
   endpoint,
@@ -521,13 +541,52 @@ async function streamChatCompletion({
   const abortListener = () => controller.abort();
   signal?.addEventListener("abort", abortListener, { once: true });
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const resetTimeout = () => {
-    if (timeoutId) clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const streamIdleDoneMs = resolveStreamIdleDoneMs();
+  const streamFirstDeltaTimeoutMs = resolveStreamFirstDeltaTimeoutMs();
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let firstDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+  let abortedByIdle = false;
+  let abortedByNoDelta = false;
+  let hasAnyDelta = false;
+  let hasMeaningfulDelta = false;
+
+  const resetIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      abortedByIdle = true;
+      controller.abort();
+    }, streamIdleDoneMs);
   };
-  resetTimeout();
+
+  const armFirstDeltaTimeout = () => {
+    if (firstDeltaTimer) clearTimeout(firstDeltaTimer);
+    firstDeltaTimer = setTimeout(() => {
+      abortedByNoDelta = true;
+      controller.abort();
+    }, streamFirstDeltaTimeoutMs);
+  };
+
+  const markDelta = (delta: string) => {
+    if (!hasAnyDelta) {
+      hasAnyDelta = true;
+      if (firstDeltaTimer) {
+        clearTimeout(firstDeltaTimer);
+        firstDeltaTimer = null;
+      }
+      resetIdle();
+    }
+    if (!hasMeaningfulDelta && delta.trim().length > 0) {
+      hasMeaningfulDelta = true;
+    }
+    if (delta.trim().length > 0) {
+      resetIdle();
+    }
+  };
 
   try {
+    armFirstDeltaTimeout();
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -571,38 +630,61 @@ async function streamChatCompletion({
     const decoder = new TextDecoder();
     let buffer = "";
 
-    while (true) {
-      if (signal?.aborted) break;
-      const { value, done } = await reader.read();
-      if (done) break;
-      resetTimeout();
-      buffer += decoder.decode(value, { stream: true });
+    try {
+      while (true) {
+        if (signal?.aborted) break;
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
 
-      const lines = buffer.split(/\n/);
-      buffer = lines.pop() ?? "";
+        const lines = buffer.split(/\n/);
+        buffer = lines.pop() ?? "";
 
-      for (const rawLine of lines) {
-        const line = rawLine.replace(/\r$/, "").trim();
-        if (!line) continue;
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice("data:".length).trim();
-        if (!data) continue;
-        if (data === "[DONE]") return;
+        for (const rawLine of lines) {
+          const line = rawLine.replace(/\r$/, "").trim();
+          if (!line) continue;
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice("data:".length).trim();
+          if (!data) continue;
+          if (data === "[DONE]") return;
 
-        let json: ChatCompletionStreamChunk | null = null;
-        try {
-          json = JSON.parse(data) as ChatCompletionStreamChunk;
-        } catch {
-          json = null;
-        }
-        const delta = json?.choices?.[0]?.delta?.content;
-        if (typeof delta === "string" && delta.length) {
-          onDelta(delta);
+          let json: ChatCompletionStreamChunk | null = null;
+          try {
+            json = JSON.parse(data) as ChatCompletionStreamChunk;
+          } catch {
+            json = null;
+          }
+
+          if (json?.error?.message) {
+            throw new Error(json.error.message);
+          }
+
+          const choice = json?.choices?.[0];
+          const delta = choice?.delta?.content;
+          if (typeof delta === "string" && delta.length) {
+            markDelta(delta);
+            onDelta(delta);
+          }
+
+          const finishReason = choice?.finish_reason;
+          if (typeof finishReason === "string" && finishReason.length) {
+            return;
+          }
         }
       }
+    } catch (error) {
+      if (abortedByIdle && hasMeaningfulDelta) {
+        return;
+      }
+      if (abortedByNoDelta) {
+        throw new Error("Upstream did not stream any content in time.");
+      }
+      throw error;
     }
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    if (idleTimer) clearTimeout(idleTimer);
+    if (firstDeltaTimer) clearTimeout(firstDeltaTimer);
     signal?.removeEventListener("abort", abortListener);
   }
 }
@@ -803,7 +885,16 @@ export async function POST(req: Request) {
             sendStatus("done");
             send("done", { ok: true, source: "single", provider, model });
           } catch (error) {
-            console.error("[trial-summarize][stream]", { provider, error });
+            if (req.signal.aborted) {
+              return;
+            }
+            const isAbortError =
+              error instanceof Error &&
+              (error.name === "AbortError" ||
+                error.message.toLowerCase().includes("aborted"));
+            if (!isAbortError) {
+              console.error("[trial-summarize][stream]", { provider, error });
+            }
             const message =
               error instanceof Error ? error.message : "Upstream error.";
             sendStatus("error");

@@ -247,7 +247,7 @@
       },
       {
         "title": "模型与提示词",
-        "description": "可切换 DeepSeek/Gemini 模型，支持自定义提示词微调输出。",
+        "description": "内置 Gemini 模型，支持自定义提示词微调输出。",
         "icon": "RiSparklingLine"
       },
       {

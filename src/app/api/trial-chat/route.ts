@@ -161,6 +161,7 @@ export async function POST(req: Request) {
         async start(controller) {
           const reader = response.body!.getReader();
           let buffer = "";
+          let doneReceived = false;
           try {
             while (true) {
               const { value, done } = await reader.read();
@@ -173,27 +174,36 @@ export async function POST(req: Request) {
                 if (!trimmed || !trimmed.startsWith("data:")) continue;
                 const payloadStr = trimmed.slice(5).trim();
                 if (payloadStr === "[DONE]") {
-                  continue;
+                  doneReceived = true;
+                  break;
                 }
                 try {
                   const json = JSON.parse(payloadStr) as {
                     choices?: Array<{
                       delta?: { content?: string };
                       message?: { content?: string };
+                      finish_reason?: string | null;
                     }>;
                   };
+                  const choice = json.choices?.[0];
                   const delta =
-                    json.choices?.[0]?.delta?.content ||
-                    json.choices?.[0]?.message?.content ||
-                    "";
+                    choice?.delta?.content || choice?.message?.content || "";
                   if (delta) {
                     controller.enqueue(encoder.encode(delta));
+                  }
+                  if (
+                    typeof choice?.finish_reason === "string" &&
+                    choice.finish_reason.length
+                  ) {
+                    doneReceived = true;
+                    break;
                   }
                 } catch (error) {
                   // ignore malformed chunk
                   continue;
                 }
               }
+              if (doneReceived) break;
             }
             if (buffer.length) {
               try {
@@ -201,12 +211,12 @@ export async function POST(req: Request) {
                   choices?: Array<{
                     delta?: { content?: string };
                     message?: { content?: string };
+                    finish_reason?: string | null;
                   }>;
                 };
+                const choice = json.choices?.[0];
                 const delta =
-                  json.choices?.[0]?.delta?.content ||
-                  json.choices?.[0]?.message?.content ||
-                  "";
+                  choice?.delta?.content || choice?.message?.content || "";
                 if (delta) {
                   controller.enqueue(encoder.encode(delta));
                 }

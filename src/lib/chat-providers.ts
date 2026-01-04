@@ -5,7 +5,7 @@ import {
 } from "@/config/chat-providers";
 
 type ProviderConfig = {
-  endpoint: string;
+  endpoint: string | (() => string);
   apiKeyEnv: keyof NodeJS.ProcessEnv;
   resolveModel(): string;
 };
@@ -19,6 +19,23 @@ const PROVIDER_CONFIG: Record<ChatProviderId, ProviderConfig> = {
       return configured && configured.length > 0
         ? configured
         : "gemini-3-pro-preview";
+    },
+  },
+  devdove: {
+    endpoint: () => {
+      const configured = process.env.DEVDOVE_BASE_URL?.trim();
+      if (!configured) return "https://api.devdove.site/v1/chat/completions";
+      const normalized = configured.replace(/\/+$/, "");
+      if (normalized.endsWith("/v1/chat/completions")) return normalized;
+      if (normalized.endsWith("/v1")) return `${normalized}/chat/completions`;
+      return `${normalized}/v1/chat/completions`;
+    },
+    apiKeyEnv: "DEVDOVE_API_KEY",
+    resolveModel: () => {
+      const configured = process.env.DEVDOVE_MODEL?.trim();
+      return configured && configured.length > 0
+        ? configured
+        : "gemini-2.5-flash";
     },
   },
   deepseek: {
@@ -44,7 +61,8 @@ export function resolveChatProvider(input?: unknown): ChatProviderId {
 }
 
 export function getChatProviderEndpoint(provider: ChatProviderId) {
-  return PROVIDER_CONFIG[provider].endpoint;
+  const endpoint = PROVIDER_CONFIG[provider].endpoint;
+  return typeof endpoint === "function" ? endpoint() : endpoint;
 }
 
 export function getChatProviderApiKey(provider: ChatProviderId) {

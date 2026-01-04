@@ -61,13 +61,11 @@ OSS_ACCESS_KEY_SECRET=你的 OSS AccessKey Secret
 
 #### AI 服务配置
 ```
-APIMART_API_KEY=你的 APIMart API 密钥
-APIMART_MODEL=gemini-3-pro-preview
-DEEPSEEK_API_KEY=你的 DeepSeek API 密钥
-DEEPSEEK_MODEL=deepseek-chat
-NEXT_PUBLIC_DEFAULT_CHAT_PROVIDER=deepseek # 可选：deepseek / apimart
+DEVDOVE_API_KEY=你的 DevDove API 密钥
+DEVDOVE_BASE_URL=https://api.devdove.site # 可选：自定义网关地址（不填则使用默认）
+DEVDOVE_MODEL=gemini-2.5-flash
+NEXT_PUBLIC_DEFAULT_CHAT_PROVIDER=devdove
 ```
-DeepSeek 官方文档：https://api-docs.deepseek.com/zh-cn/
 
 ### 3. 部署
 配置完环境变量后，点击 "Deploy" 开始部署。
